@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -153,6 +153,6 @@ def tabbed_browser(stubs, win_registry):
     objreg.delete('tabbed-browser', scope='window', window=0)
 
 
-def test_version(tabbed_browser):
+def test_version(tabbed_browser, qapp):
     utilcmds.version(win_id=0)
     assert tabbed_browser.opened_url == QUrl('qute://version')

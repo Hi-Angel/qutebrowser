@@ -1,4 +1,4 @@
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
 # This file is part of qutebrowser.
@@ -20,11 +20,11 @@
 
 import pytest
 
-from qutebrowser.misc import msgbox
-from qutebrowser.utils import utils
-
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QMessageBox, QWidget
+
+from qutebrowser.misc import msgbox
+from qutebrowser.utils import utils
 
 
 @pytest.fixture(autouse=True)

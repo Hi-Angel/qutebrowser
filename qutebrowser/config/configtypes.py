@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -62,6 +62,7 @@ from PyQt5.QtWidgets import QTabWidget, QTabBar
 from qutebrowser.commands import cmdutils
 from qutebrowser.config import configexc
 from qutebrowser.utils import standarddir, utils, qtutils, urlutils
+from qutebrowser.keyinput import keyutils
 
 
 SYSTEM_PROXY = object()  # Return value for Proxy type
@@ -450,7 +451,7 @@ class List(BaseType):
     def from_obj(self, value):
         if value is None:
             return []
-        return value
+        return [self.valtype.from_obj(v) for v in value]
 
     def to_py(self, value):
         self._basic_py_validation(value, list)
@@ -499,11 +500,21 @@ class ListOrValue(BaseType):
 
     _show_valtype = True
 
-    def __init__(self, valtype, none_ok=False, *args, **kwargs):
+    def __init__(self, valtype, *args, none_ok=False, **kwargs):
         super().__init__(none_ok)
         assert not isinstance(valtype, (List, ListOrValue)), valtype
         self.listtype = List(valtype, none_ok=none_ok, *args, **kwargs)
         self.valtype = valtype
+
+    def _val_and_type(self, value):
+        """Get the value and type to use for to_str/to_doc/from_str."""
+        if isinstance(value, list):
+            if len(value) == 1:
+                return value[0], self.valtype
+            else:
+                return value, self.listtype
+        else:
+            return value, self.valtype
 
     def get_name(self):
         return self.listtype.get_name() + ', or ' + self.valtype.get_name()
@@ -532,25 +543,15 @@ class ListOrValue(BaseType):
         if value is None:
             return ''
 
-        if isinstance(value, list):
-            if len(value) == 1:
-                return self.valtype.to_str(value[0])
-            else:
-                return self.listtype.to_str(value)
-        else:
-            return self.valtype.to_str(value)
+        val, typ = self._val_and_type(value)
+        return typ.to_str(val)
 
     def to_doc(self, value, indent=0):
         if value is None:
             return 'empty'
 
-        if isinstance(value, list):
-            if len(value) == 1:
-                return self.valtype.to_doc(value[0], indent)
-            else:
-                return self.listtype.to_doc(value, indent)
-        else:
-            return self.valtype.to_doc(value, indent)
+        val, typ = self._val_and_type(value)
+        return typ.to_doc(val)
 
 
 class FlagList(List):
@@ -963,7 +964,7 @@ class Font(BaseType):
     # Gets set when the config is initialized.
     monospace_fonts = None
     font_regex = re.compile(r"""
-        ^(
+        (
             (
                 # style
                 (?P<style>normal|italic|oblique) |
@@ -976,14 +977,14 @@ class Font(BaseType):
                 (?P<size>[0-9]+((\.[0-9]+)?[pP][tT]|[pP][xX]))
             )\           # size/weight/style are space-separated
         )*               # 0-inf size/weight/style tags
-        (?P<family>.+)$  # mandatory font family""", re.VERBOSE)
+        (?P<family>.+)  # mandatory font family""", re.VERBOSE)
 
     def to_py(self, value):
         self._basic_py_validation(value, str)
         if not value:
             return None
 
-        if not self.font_regex.match(value):  # pragma: no cover
+        if not self.font_regex.fullmatch(value):  # pragma: no cover
             # This should never happen, as the regex always matches everything
             # as family.
             raise configexc.ValidationError(value, "must be a valid font")
@@ -1002,7 +1003,7 @@ class FontFamily(Font):
         if not value:
             return None
 
-        match = self.font_regex.match(value)
+        match = self.font_regex.fullmatch(value)
         if not match:  # pragma: no cover
             # This should never happen, as the regex always matches everything
             # as family.
@@ -1039,7 +1040,7 @@ class QtFont(Font):
         font.setStyle(QFont.StyleNormal)
         font.setWeight(QFont.Normal)
 
-        match = self.font_regex.match(value)
+        match = self.font_regex.fullmatch(value)
         if not match:  # pragma: no cover
             # This should never happen, as the regex always matches everything
             # as family.
@@ -1198,7 +1199,9 @@ class Dict(BaseType):
     def from_obj(self, value):
         if value is None:
             return {}
-        return value
+
+        return {self.keytype.from_obj(key): self.valtype.from_obj(val)
+                for key, val in value.items()}
 
     def _fill_fixed_keys(self, value):
         """Fill missing fixed keys with a None-value."""
@@ -1261,12 +1264,12 @@ class File(BaseType):
         try:
             if not os.path.isabs(value):
                 value = os.path.join(standarddir.config(), value)
-                not_isfile_message = ("must be a valid path relative to the "
-                                      "config directory!")
-            else:
-                not_isfile_message = "must be a valid file!"
+
             if self.required and not os.path.isfile(value):
-                raise configexc.ValidationError(value, not_isfile_message)
+                raise configexc.ValidationError(
+                    value,
+                    "Must be an existing file (absolute or relative to the "
+                    "config directory)!")
         except UnicodeEncodeError as e:
             raise configexc.ValidationError(value, e)
 
@@ -1341,9 +1344,12 @@ class ShellCommand(List):
         if not value:
             return value
 
-        if self.placeholder and '{}' not in ' '.join(value):
+        if (self.placeholder and
+                '{}' not in ' '.join(value) and
+                '{file}' not in ' '.join(value)):
             raise configexc.ValidationError(value, "needs to contain a "
-                                            "{}-placeholder.")
+                                            "{}-placeholder or a "
+                                            "{file}-placeholder.")
         return value
 
 
@@ -1403,7 +1409,7 @@ class SearchEngineUrl(BaseType):
 
         try:
             value.format("")
-        except (KeyError, IndexError) as e:
+        except (KeyError, IndexError):
             raise configexc.ValidationError(
                 value, "may not contain {...} (use {{ and }} for literal {/})")
         except ValueError as e:
@@ -1619,9 +1625,7 @@ class TimestampTemplate(BaseType):
 
     """An strftime-like template for timestamps.
 
-    See
-    https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior
-    for reference.
+    See https://sqlite.org/lang_datefunc.html for reference.
     """
 
     def to_py(self, value):
@@ -1644,10 +1648,16 @@ class Key(BaseType):
 
     """A name of a key."""
 
+    def from_obj(self, value):
+        """Make sure key sequences are always normalized."""
+        return str(keyutils.KeySequence.parse(value))
+
     def to_py(self, value):
         self._basic_py_validation(value, str)
         if not value:
             return None
-        if utils.is_special_key(value):
-            value = '<{}>'.format(utils.normalize_keystr(value[1:-1]))
-        return value
+
+        try:
+            return keyutils.KeySequence.parse(value)
+        except keyutils.KeyParseError as e:
+            raise configexc.ValidationError(value, str(e))

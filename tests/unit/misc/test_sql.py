@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -20,9 +20,10 @@
 """Test the SQL API."""
 
 import pytest
-from qutebrowser.misc import sql
 
 from PyQt5.QtSql import QSqlError
+
+from qutebrowser.misc import sql
 
 
 pytestmark = pytest.mark.usefixtures('init_sql')
@@ -39,7 +40,7 @@ def test_sqlerror():
 class TestSqliteError:
 
     @pytest.mark.parametrize('error_code, environmental', [
-        ('9', True),  # SQLITE_LOCKED
+        ('5', True),  # SQLITE_BUSY
         ('19', False),  # SQLITE_CONSTRAINT
     ])
     def test_environmental(self, error_code, environmental):
@@ -156,13 +157,13 @@ def test_iter():
 
 @pytest.mark.parametrize('rows, sort_by, sort_order, limit, result', [
     ([{"a": 2, "b": 5}, {"a": 1, "b": 6}, {"a": 3, "b": 4}], 'a', 'asc', 5,
-        [(1, 6), (2, 5), (3, 4)]),
+     [(1, 6), (2, 5), (3, 4)]),
     ([{"a": 2, "b": 5}, {"a": 1, "b": 6}, {"a": 3, "b": 4}], 'a', 'desc', 3,
-        [(3, 4), (2, 5), (1, 6)]),
+     [(3, 4), (2, 5), (1, 6)]),
     ([{"a": 2, "b": 5}, {"a": 1, "b": 6}, {"a": 3, "b": 4}], 'b', 'desc', 2,
-        [(1, 6), (2, 5)]),
+     [(1, 6), (2, 5)]),
     ([{"a": 2, "b": 5}, {"a": 1, "b": 6}, {"a": 3, "b": 4}], 'a', 'asc', -1,
-        [(1, 6), (2, 5), (3, 4)]),
+     [(1, 6), (2, 5), (3, 4)]),
 ])
 def test_select(rows, sort_by, sort_order, limit, result):
     table = sql.SqlTable('Foo', ['a', 'b'])

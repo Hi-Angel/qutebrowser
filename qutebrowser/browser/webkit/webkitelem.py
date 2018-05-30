@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -118,6 +118,8 @@ class WebKitElement(webelem.AbstractWebElement):
 
     def set_value(self, value):
         self._check_vanished()
+        if self._tab.is_deleted():
+            raise webelem.OrphanedError("Tab containing element vanished")
         if self.is_content_editable():
             log.webelem.debug("Filling {!r} via set_text.".format(self))
             self._elem.setPlainText(value)
@@ -125,6 +127,14 @@ class WebKitElement(webelem.AbstractWebElement):
             log.webelem.debug("Filling {!r} via javascript.".format(self))
             value = javascript.string_escape(value)
             self._elem.evaluateJavaScript("this.value='{}'".format(value))
+
+    def caret_position(self):
+        """Get the text caret position for the current element."""
+        self._check_vanished()
+        pos = self._elem.evaluateJavaScript('this.selectionStart')
+        if pos is None:
+            return 0
+        return int(pos)
 
     def insert_text(self, text):
         self._check_vanished()

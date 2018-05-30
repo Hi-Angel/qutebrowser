@@ -44,8 +44,8 @@ be easy to solve]
 If you prefer C++ or Javascript to Python, see the relevant issues which involve
 work in those languages:
 
-* https://github.com/qutebrowser/qutebrowser/issues?utf8=%E2%9C%93&q=is%3Aopen%20is%3Aissue%20label%3Ac%2B%2B[C++] (mostly work on Qt, the library behind qutebrowser)
-* https://github.com/qutebrowser/qutebrowser/issues?q=is%3Aopen+is%3Aissue+label%3Ajavascript[JavaScript]
+* https://github.com/qutebrowser/qutebrowser/issues?q=is%3Aopen+is%3Aissue+label%3A%22language%3A+c%2B%2B%22[C++] (mostly work on Qt, the library behind qutebrowser)
+* https://github.com/qutebrowser/qutebrowser/issues?q=is%3Aopen+is%3Aissue+label%3A%22language%3A+javascript%22[JavaScript]
 
 There are also some things to do if you don't want to write code:
 
@@ -100,16 +100,10 @@ Currently, the following tox environments are available:
   - `py35`, `py36`: Run pytest for python 3.5/3.6 with the system-wide PyQt.
   - `py36-pyqt57`, ..., `py36-pyqt59`: Run pytest with the given PyQt version (`py35-*` also works).
   - `py36-pyqt59-cov`: Run with coverage support (other Python/PyQt versions work too).
-* `flake8`: Run https://pypi.python.org/pypi/flake8[flake8] checks:
-                https://pypi.python.org/pypi/pyflakes[pyflakes],
-                https://pypi.python.org/pypi/pep8[pep8],
-                https://pypi.python.org/pypi/mccabe[mccabe].
+* `flake8`: Run various linting checks via https://pypi.python.org/pypi/flake8[flake8].
 * `vulture`: Run https://pypi.python.org/pypi/vulture[vulture] to find
   unused code portions.
 * `pylint`: Run http://pylint.org/[pylint] static code analysis.
-* `pydocstyle`: Check
-  https://www.python.org/dev/peps/pep-0257/[PEP257] compliance with
-  https://github.com/PyCQA/pydocstyle[pydocstyle].
 * `pyroma`: Check packaging practices with
   https://pypi.python.org/pypi/pyroma/[pyroma].
 * `eslint`: Run http://eslint.org/[ESLint] javascript checker.
@@ -381,7 +375,7 @@ The following logging levels are available for every logger:
 |error     |There was an issue and some kind of operation was abandoned.
 |warning   |There was an issue but the operation can continue running.
 |info      |General informational messages.
-|debug     |Verbose debugging informations.
+|debug     |Verbose debugging information.
 |=======================================================================
 
 [[commands]]
@@ -470,7 +464,6 @@ The following arguments are supported for `@cmdutils.argument`:
 - `flag`: Customize the short flag (`-x`) the argument will get.
 - `win_id=True`: Mark the argument as special window ID argument.
 - `count=True`: Mark the argument as special count argument.
-- `hide=True`: Hide the argument from the documentation.
 - `completion`: A completion function (see `qutebrowser.completions.models.*`)
   to use when completing arguments for the given command.
 - `choices`: The allowed string choices for the argument.
@@ -573,6 +566,20 @@ can be useful for debugging:
 - chrome://gpuclean/ (crashes the current renderer process!)
 - chrome://ppapiflashcrash/
 - chrome://ppapiflashhang/
+
+QtWebEngine internals
+~~~~~~~~~~~~~~~~~~~~~
+
+This is mostly useful for qutebrowser maintainers to work around issues in Qt - if you don't understand it, don't worry, just ignore it.
+
+The hierarchy of widgets when QtWebEngine is involved looks like this:
+
+- qutebrowser has a `WebEngineTab` object, which is its abstraction over QtWebKit/QtWebEngine.
+- The `WebEngineTab` has a `_widget` attribute, which is the https://doc.qt.io/qt-5/qwebengineview.html[QWebEngineView]
+- That view has a https://doc.qt.io/qt-5/qwebenginepage.html[QWebEnginePage] for everything which doesn't require rendering.
+- The view also has a layout with exactly one element (which also is its `focusProxy()`)
+- That element is the  http://code.qt.io/cgit/qt/qtwebengine.git/tree/src/webenginewidgets/render_widget_host_view_qt_delegate_widget.cpp[RenderWidgetHostViewQtDelegateWidget] (it inherits https://doc.qt.io/qt-5/qquickwidget.html[QQuickWidget]) - also often referred to as RWHV or RWHVQDW. It can be obtained via `sip.cast(tab._widget.focusProxy(), QQuickWidget)`.
+- Calling `rootObject()` on that gives us the https://doc.qt.io/qt-5/qquickitem.html[QQuickItem] where Chromium renders into (?). With it, we can do things like `.setRotation(20)`.
 
 Style conventions
 -----------------
@@ -677,11 +684,11 @@ qutebrowser release
 ~~~~~~~~~~~~~~~~~~~
 
 * Make sure there are no unstaged changes and the tests are green.
+* Make sure all issues with the related milestone are closed.
 * Run `x=... y=...` to set the respective shell variables.
 
-* Adjust `__version_info__` in `qutebrowser/__init__.py`.
 * Update changelog (remove *(unreleased)*).
-* Run tests again.
+* Adjust `__version_info__` in `qutebrowser/__init__.py`.
 * Commit.
 
 * Create annotated git tag (`git tag -s "v1.$x.$y" -m "Release v1.$x.$y"`).
@@ -691,9 +698,11 @@ qutebrowser release
 * Mark the milestone at https://github.com/qutebrowser/qutebrowser/milestones
 as closed.
 
-* Linux: Run `python3 scripts/dev/build_release.py --upload v1.$x.$y`.
-* Windows: Run `C:\Python36-32\python scripts\dev\build_release.py --asciidoc C:\Python27\python C:\asciidoc-8.6.9\asciidoc.py --upload v1.X.Y` (replace X/Y by hand).
-* macOS: Run `python3 scripts/dev/build_release.py --upload v1.X.Y` (replace X/Y by hand).
-* On server: Run `python3 scripts/dev/download_release.py v1.X.Y` (replace X/Y by hand).
+* Linux: Run `git checkout v1.$x.$y && ./.venv/bin/python3 scripts/dev/build_release.py --upload v1.$x.$y`.
+* Windows: Run `git checkout v1.X.Y; C:\Python36-32\python scripts\dev\build_release.py --asciidoc C:\Python27\python C:\asciidoc-8.6.9\asciidoc.py --upload v1.X.Y` (replace X/Y by hand).
+* macOS: Run `git checkout v1.X.Y && python3 scripts/dev/build_release.py --upload v1.X.Y` (replace X/Y by hand).
+* On server:
+  - Run `python3 scripts/dev/download_release.py v1.X.Y` (replace X/Y by hand).
+  - Run `git pull github master && sudo python3 scripts/asciidoc2html.py --website /srv/http/qutebrowser`
 * Update `qutebrowser-git` PKGBUILD if dependencies/install changed.
 * Announce to qutebrowser and qutebrowser-announce mailinglist.

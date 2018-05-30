@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -43,7 +43,7 @@ def helptopic(*, info):
                 for opt in configdata.DATA.values())
 
     model.add_category(listcategory.ListCategory("Commands", cmdlist))
-    model.add_category(listcategory.ListCategory("Settings", sorted(settings)))
+    model.add_category(listcategory.ListCategory("Settings", settings))
     return model
 
 
@@ -59,7 +59,8 @@ def quickmark(*, info=None):  # pylint: disable=unused-argument
     model = completionmodel.CompletionModel(column_widths=(30, 70, 0))
     marks = objreg.get('quickmark-manager').marks.items()
     model.add_category(listcategory.ListCategory('Quickmarks', marks,
-                                                 delete_func=delete))
+                                                 delete_func=delete,
+                                                 sort=False))
     return model
 
 
@@ -75,7 +76,8 @@ def bookmark(*, info=None):  # pylint: disable=unused-argument
     model = completionmodel.CompletionModel(column_widths=(30, 70, 0))
     marks = objreg.get('bookmark-manager').marks.items()
     model.add_category(listcategory.ListCategory('Bookmarks', marks,
-                                                 delete_func=delete))
+                                                 delete_func=delete,
+                                                 sort=False))
     return model
 
 
@@ -92,10 +94,11 @@ def session(*, info=None):  # pylint: disable=unused-argument
     return model
 
 
-def buffer(*, info=None):  # pylint: disable=unused-argument
-    """A model to complete on open tabs across all windows.
+def _buffer(skip_win_id=None):
+    """Helper to get the completion model for buffer/other_buffer.
 
-    Used for switching the buffer command.
+    Args:
+        skip_win_id: The id of the window to skip, or None to include all.
     """
     def delete_buffer(data):
         """Close the selected tab."""
@@ -107,18 +110,57 @@ def buffer(*, info=None):  # pylint: disable=unused-argument
     model = completionmodel.CompletionModel(column_widths=(6, 40, 54))
 
     for win_id in objreg.window_registry:
+        if skip_win_id is not None and win_id == skip_win_id:
+            continue
         tabbed_browser = objreg.get('tabbed-browser', scope='window',
                                     window=win_id)
         if tabbed_browser.shutting_down:
             continue
         tabs = []
-        for idx in range(tabbed_browser.count()):
-            tab = tabbed_browser.widget(idx)
+        for idx in range(tabbed_browser.widget.count()):
+            tab = tabbed_browser.widget.widget(idx)
             tabs.append(("{}/{}".format(win_id, idx + 1),
                          tab.url().toDisplayString(),
-                         tabbed_browser.page_title(idx)))
+                         tabbed_browser.widget.page_title(idx)))
         cat = listcategory.ListCategory("{}".format(win_id), tabs,
-            delete_func=delete_buffer)
+                                        delete_func=delete_buffer)
         model.add_category(cat)
+
+    return model
+
+
+def buffer(*, info=None):  # pylint: disable=unused-argument
+    """A model to complete on open tabs across all windows.
+
+    Used for switching the buffer command.
+    """
+    return _buffer()
+
+
+def other_buffer(*, info):
+    """A model to complete on open tabs across all windows except the current.
+
+    Used for the tab-take command.
+    """
+    return _buffer(skip_win_id=info.win_id)
+
+
+def window(*, info):
+    """A model to complete on all open windows."""
+    model = completionmodel.CompletionModel(column_widths=(6, 30, 64))
+
+    windows = []
+
+    for win_id in objreg.window_registry:
+        if win_id == info.win_id:
+            continue
+        tabbed_browser = objreg.get('tabbed-browser', scope='window',
+                                    window=win_id)
+        tab_titles = (tab.title() for tab in tabbed_browser.widgets())
+        windows.append(("{}".format(win_id),
+                        objreg.window_registry[win_id].windowTitle(),
+                        ", ".join(tab_titles)))
+
+    model.add_category(listcategory.ListCategory("Windows", windows))
 
     return model

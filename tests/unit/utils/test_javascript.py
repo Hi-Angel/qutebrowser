@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -100,3 +100,12 @@ def test_convert_js_arg(arg, expected):
 def test_assemble(base, expected_base):
     expected = '"use strict";\n{}.func(23);'.format(expected_base)
     assert javascript.assemble(base, 'func', 23) == expected
+
+
+def test_wrap_global():
+    source = javascript.wrap_global('name',
+                                    'console.log("foo");',
+                                    'console.log("bar");')
+    assert 'window._qutebrowser.initialized["name"]' in source
+    assert 'console.log("foo");' in source
+    assert 'console.log("bar");' in source

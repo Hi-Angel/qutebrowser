@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 
 # This file is part of qutebrowser.
 #
@@ -25,8 +25,8 @@ https://bitbucket.org/logilab/pylint/issue/512/
 """
 
 import os
-import sys
 import os.path
+import sys
 import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
@@ -49,12 +49,12 @@ def main():
                 files.append(os.path.join(dirpath, fn))
 
     disabled = [
+        # pytest fixtures
         'redefined-outer-name',
         'unused-argument',
+        # things which are okay in tests
         'missing-docstring',
         'protected-access',
-        # https://bitbucket.org/logilab/pylint/issue/511/
-        #'undefined-variable',
         'len-as-condition',
         # directories without __init__.py...
         'import-error',
@@ -65,15 +65,13 @@ def main():
         toxinidir,
     ]
 
-    no_docstring_rgx = ['^__.*__$', '^setup$']
     args = (['--disable={}'.format(','.join(disabled)),
-             '--no-docstring-rgx=({})'.format('|'.join(no_docstring_rgx)),
              '--ignored-modules=helpers,pytest,PyQt5'] +
             sys.argv[2:] + files)
     env = os.environ.copy()
     env['PYTHONPATH'] = os.pathsep.join(pythonpath)
 
-    ret = subprocess.call(['pylint'] + args, env=env)
+    ret = subprocess.run(['pylint'] + args, env=env).returncode
     return ret
 
 

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -61,7 +61,7 @@ def hist(init_sql, config_stub):
 
     ('foo bar',
      [('foo', ''), ('bar foo', ''), ('xfooyybarz', '')],
-     [('xfooyybarz', '')]),
+     [('bar foo', ''), ('xfooyybarz', '')]),
 
     ('foo%bar',
      [('foo%bar', ''), ('foo bar', ''), ('foobar', '')],
@@ -78,6 +78,10 @@ def hist(init_sql, config_stub):
     ("can't",
      [("can't touch this", ''), ('a', '')],
      [("can't touch this", '')]),
+
+    ("ample itle",
+     [('example.com', 'title'), ('example.com', 'nope')],
+     [('example.com', 'title')]),
 ])
 def test_set_pattern(pattern, before, after, model_validator, hist):
     """Validate the filtering and sorting results of set_pattern."""
@@ -87,6 +91,38 @@ def test_set_pattern(pattern, before, after, model_validator, hist):
     model_validator.set_model(cat)
     cat.set_pattern(pattern)
     model_validator.validate(after)
+
+
+def test_set_pattern_repeated(model_validator, hist):
+    """Validate multiple subsequent calls to set_pattern."""
+    hist.insert({'url': 'example.com/foo', 'title': 'title1', 'last_atime': 1})
+    hist.insert({'url': 'example.com/bar', 'title': 'title2', 'last_atime': 1})
+    hist.insert({'url': 'example.com/baz', 'title': 'title3', 'last_atime': 1})
+    cat = histcategory.HistoryCategory()
+    model_validator.set_model(cat)
+
+    cat.set_pattern('b')
+    model_validator.validate([
+        ('example.com/bar', 'title2'),
+        ('example.com/baz', 'title3'),
+    ])
+
+    cat.set_pattern('ba')
+    model_validator.validate([
+        ('example.com/bar', 'title2'),
+        ('example.com/baz', 'title3'),
+    ])
+
+    cat.set_pattern('ba ')
+    model_validator.validate([
+        ('example.com/bar', 'title2'),
+        ('example.com/baz', 'title3'),
+    ])
+
+    cat.set_pattern('ba z')
+    model_validator.validate([
+        ('example.com/baz', 'title3'),
+    ])
 
 
 @pytest.mark.parametrize('max_items, before, after', [
@@ -147,7 +183,7 @@ def test_remove_rows(hist, model_validator):
     cat.set_pattern('')
     hist.delete('url', 'foo')
     cat.removeRows(0, 1)
-    model_validator.validate([('bar', 'Bar', '1970-01-01')])
+    model_validator.validate([('bar', 'Bar')])
 
 
 def test_remove_rows_fetch(hist):
@@ -169,3 +205,20 @@ def test_remove_rows_fetch(hist):
     hist.delete('url', '298')
     cat.removeRows(297, 1)
     assert cat.rowCount() == 299
+
+
+@pytest.mark.parametrize('fmt, expected', [
+    ('%Y-%m-%d', '2018-02-27'),
+    ('%m/%d/%Y %H:%M', '02/27/2018 08:30'),
+    ('', ''),
+])
+def test_timestamp_fmt(fmt, expected, model_validator, config_stub, init_sql):
+    """Validate the filtering and sorting results of set_pattern."""
+    config_stub.val.completion.timestamp_format = fmt
+    hist = sql.SqlTable('CompletionHistory', ['url', 'title', 'last_atime'])
+    atime = datetime.datetime(2018, 2, 27, 8, 30)
+    hist.insert({'url': 'foo', 'title': '', 'last_atime': atime.timestamp()})
+    cat = histcategory.HistoryCategory()
+    model_validator.set_model(cat)
+    cat.set_pattern('')
+    model_validator.validate([('foo', '', expected)])

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -21,8 +21,9 @@
 
 import os
 import time
+import contextlib
 
-from PyQt5.QtCore import pyqtSlot, QUrl, QTimer
+from PyQt5.QtCore import pyqtSlot, QUrl, QTimer, pyqtSignal
 
 from qutebrowser.commands import cmdutils, cmdexc
 from qutebrowser.utils import (utils, objreg, log, usertypes, message,
@@ -31,7 +32,7 @@ from qutebrowser.misc import objects, sql
 
 
 # increment to indicate that HistoryCompletion must be regenerated
-_USER_VERSION = 1
+_USER_VERSION = 2
 
 
 class CompletionHistory(sql.SqlTable):
@@ -50,6 +51,11 @@ class CompletionHistory(sql.SqlTable):
 class WebHistory(sql.SqlTable):
 
     """The global history of visited pages."""
+
+    # All web history cleared
+    history_cleared = pyqtSignal()
+    # one url cleared
+    url_cleared = pyqtSignal(QUrl)
 
     def __init__(self, parent=None):
         super().__init__("History", ['url', 'title', 'atime', 'redirect'],
@@ -87,11 +93,22 @@ class WebHistory(sql.SqlTable):
     def __contains__(self, url):
         return self._contains_query.run(val=url).value()
 
+    @contextlib.contextmanager
+    def _handle_sql_errors(self):
+        try:
+            yield
+        except sql.SqlError as e:
+            if e.environmental:
+                message.error("Failed to write history: {}".format(e.text()))
+            else:
+                raise
+
     def _rebuild_completion(self):
         data = {'url': [], 'title': [], 'last_atime': []}
         # select the latest entry for each url
         q = sql.Query('SELECT url, title, max(atime) AS atime FROM History '
-                      'WHERE NOT redirect GROUP BY url ORDER BY atime asc')
+                      'WHERE NOT redirect and url NOT LIKE "qute://back%" '
+                      'GROUP BY url ORDER BY atime asc')
         for entry in q.run():
             data['url'].append(self._format_completion_url(QUrl(entry.url)))
             data['title'].append(entry.title)
@@ -138,12 +155,14 @@ class WebHistory(sql.SqlTable):
         if force:
             self._do_clear()
         else:
-            message.confirm_async(self._do_clear, title="Clear all browsing "
-                                  "history?")
+            message.confirm_async(yes_action=self._do_clear,
+                                  title="Clear all browsing history?")
 
     def _do_clear(self):
-        self.delete_all()
-        self.completion.delete_all()
+        with self._handle_sql_errors():
+            self.delete_all()
+            self.completion.delete_all()
+        self.history_cleared.emit()
 
     def delete_url(self, url):
         """Remove all history entries with the given url.
@@ -155,11 +174,14 @@ class WebHistory(sql.SqlTable):
         qtutils.ensure_valid(qurl)
         self.delete('url', self._format_url(qurl))
         self.completion.delete('url', self._format_completion_url(qurl))
+        self.url_cleared.emit(qurl)
 
     @pyqtSlot(QUrl, QUrl, str)
     def add_from_tab(self, url, requested_url, title):
         """Add a new history entry as slot, called from a BrowserTab."""
-        if url.scheme() == 'data' or requested_url.scheme() == 'data':
+        if any(url.scheme() in ('data', 'view-source') or
+               (url.scheme(), url.host()) == ('qute', 'back')
+               for url in (url, requested_url)):
             return
         if url.isEmpty():
             # things set via setHtml
@@ -191,7 +213,7 @@ class WebHistory(sql.SqlTable):
 
         atime = int(atime) if (atime is not None) else int(time.time())
 
-        try:
+        with self._handle_sql_errors():
             self.insert({'url': self._format_url(url),
                          'title': title,
                          'atime': atime,
@@ -202,11 +224,6 @@ class WebHistory(sql.SqlTable):
                     'title': title,
                     'last_atime': atime
                 }, replace=True)
-        except sql.SqlError as e:
-            if e.environmental:
-                message.error("Failed to write history: {}".format(e.text()))
-            else:
-                raise
 
     def _parse_entry(self, line):
         """Parse a history line like '12345 http://example.com title'."""
@@ -261,6 +278,7 @@ class WebHistory(sql.SqlTable):
             return
 
         def action():
+            """Actually run the import."""
             with debug.log_time(log.init, 'Import old history file to sqlite'):
                 try:
                     self._read(path)
@@ -333,7 +351,7 @@ class WebHistory(sql.SqlTable):
                 f.write('\n'.join(lines))
             message.info("Dumped history to {}".format(dest))
         except OSError as e:
-            raise cmdexc.CommandError('Could not write history: {}', e)
+            raise cmdexc.CommandError('Could not write history: {}'.format(e))
 
 
 def init(parent=None):

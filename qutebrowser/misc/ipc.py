@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -498,7 +498,7 @@ def send_or_listen(args):
             server = IPCServer(socketname)
             server.listen()
             return server
-        except AddressInUseError as e:
+        except AddressInUseError:
             # This could be a race condition...
             log.init.debug("Got AddressInUseError, trying again.")
             time.sleep(0.5)

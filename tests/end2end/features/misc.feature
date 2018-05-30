@@ -9,6 +9,13 @@ Feature: Various utility commands.
         And I run :command-accept
         Then the message "Hello World" should be shown
 
+    Scenario: :set-cmd-text and :command-accept --rapid
+        When I run :set-cmd-text :message-info "Hello World"
+        And I run :command-accept --rapid
+        And I run :command-accept
+        Then the message "Hello World" should be shown
+        And the message "Hello World" should be shown
+
     Scenario: :set-cmd-text with two commands
         When I run :set-cmd-text :message-info test ;; message-error error
         And I run :command-accept
@@ -118,8 +125,8 @@ Feature: Various utility commands.
         And "No output or error" should be logged
 
     Scenario: :jseval --file using a file that doesn't exist as js-code
-        When I run :jseval --file nonexistentfile
-        Then the error "[Errno 2] No such file or directory: 'nonexistentfile'" should be shown
+        When I run :jseval --file /nonexistentfile
+        Then the error "[Errno 2] No such file or directory: '/nonexistentfile'" should be shown
         And "No output or error" should not be logged
 
     # :debug-webaction
@@ -159,7 +166,7 @@ Feature: Various utility commands.
     @qtwebkit_skip
     Scenario: Inspector without --enable-webengine-inspector
         When I run :inspector
-        Then the error "Debugging is not enabled. See 'qutebrowser --help' for details." should be shown
+        Then the error "QtWebEngine inspector is not enabled. See 'qutebrowser --help' for details." should be shown
 
     @no_xvfb @posix @qtwebengine_skip
     Scenario: Inspector smoke test
@@ -429,6 +436,11 @@ Feature: Various utility commands.
         And I run :message-info {clipboard}bar{url}
         Then the message "foobarhttp://localhost:*/hello.txt" should be shown
 
+    Scenario: escaping {{url}} variable
+        When I open data/hello.txt
+        And I run :message-info foo{{url}}bar
+        Then the message "foo{url}bar" should be shown
+
     @xfail_norun
     Scenario: {url} in clipboard should not be expanded
         When I open data/hello.txt
@@ -449,6 +461,11 @@ Feature: Various utility commands.
         And I run :click-element id qute-input
         Then "Entering mode KeyMode.insert (reason: clicking input)" should be logged
 
+    Scenario: Clicking an element by ID with dot
+        When I open data/click_element.html
+        And I run :click-element id foo.bar
+        Then the javascript message "id with dot" should be logged
+
     Scenario: Clicking an element with tab target
         When I open data/click_element.html
         And I run :tab-only
@@ -466,6 +483,17 @@ Feature: Various utility commands.
         And I wait for "blah" in the log
         And I run :set-cmd-text :
         And I run :command-history-prev
+        And I run :command-accept
+        Then the message "blah" should be shown
+
+    Scenario: Calling previous command with :completion-item-focus
+        When I run :set-cmd-text :message-info blah
+        And I wait for "Entering mode KeyMode.command (reason: *)" in the log
+        And I run :command-accept
+        And I wait for "blah" in the log
+        And I run :set-cmd-text :
+        And I wait for "Entering mode KeyMode.command (reason: *)" in the log
+        And I run :completion-item-focus prev --history
         And I run :command-accept
         Then the message "blah" should be shown
 
@@ -541,15 +569,3 @@ Feature: Various utility commands.
         When I set up "simple" as block lists
         And I run :adblock-update
         Then the message "adblock: Read 1 hosts from 1 sources." should be shown
-
-    ## Spellcheck
-
-    @qtwebkit_skip @qt>=5.8 @cannot_have_dict=af-ZA
-    Scenario: Set valid but not installed language
-        When I run :set spellcheck.languages ['af-ZA']
-        Then the warning "Language af-ZA is not installed *" should be shown
-
-    @qtwebkit_skip @qt>=5.8 @must_have_dict=en-US
-    Scenario: Set valid and installed language
-        When I run :set spellcheck.languages ["en-US"]
-        Then the option spellcheck.languages should be set to ["en-US"]

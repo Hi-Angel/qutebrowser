@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -20,9 +20,9 @@
 """Tests for qutebrowser.utils.standarddir."""
 
 import os
+import os.path
 import sys
 import json
-import os.path
 import types
 import textwrap
 import logging
@@ -101,6 +101,21 @@ def test_fake_windows(tmpdir, monkeypatch, what):
 
     func = getattr(standarddir, what)
     assert func() == str(tmpdir / APPNAME / what)
+
+
+@pytest.mark.posix
+def test_fake_haiku(tmpdir, monkeypatch):
+    """Test getting data dir on HaikuOS."""
+    locations = {
+        QStandardPaths.DataLocation: '',
+        QStandardPaths.ConfigLocation: str(tmpdir / 'config' / APPNAME),
+    }
+    monkeypatch.setattr(standarddir.QStandardPaths, 'writableLocation',
+                        locations.get)
+    monkeypatch.setattr(standarddir.sys, 'platform', 'haiku1')
+
+    standarddir._init_data(args=None)
+    assert standarddir.data() == str(tmpdir / 'config' / APPNAME / 'data')
 
 
 class TestWritableLocation:
@@ -286,6 +301,7 @@ class TestCreatingDir:
         """Test --basedir."""
         basedir = tmpdir / 'basedir'
         assert not basedir.exists()
+
         args = types.SimpleNamespace(basedir=str(basedir))
         standarddir._init_dirs(args)
 
@@ -294,8 +310,13 @@ class TestCreatingDir:
 
         assert basedir.exists()
 
-        if utils.is_posix:
-            assert basedir.stat().mode & 0o777 == 0o700
+        if typ == 'download' or (typ == 'runtime' and not utils.is_linux):
+            assert not (basedir / typ).exists()
+        else:
+            assert (basedir / typ).exists()
+
+            if utils.is_posix:
+                assert (basedir / typ).stat().mode & 0o777 == 0o700
 
     @pytest.mark.parametrize('typ', DIR_TYPES)
     def test_exists_race_condition(self, mocker, tmpdir, typ):
@@ -540,8 +561,9 @@ def test_no_qapplication(qapp, tmpdir):
     pyfile = tmpdir / 'sub.py'
     pyfile.write_text(textwrap.dedent(sub_code), encoding='ascii')
 
-    output = subprocess.check_output([sys.executable, str(pyfile)] + sys.path,
-                                     universal_newlines=True)
+    output = subprocess.run([sys.executable, str(pyfile)] + sys.path,
+                            universal_newlines=True,
+                            check=True, stdout=subprocess.PIPE).stdout
     sub_locations = json.loads(output)
 
     standarddir._init_dirs()

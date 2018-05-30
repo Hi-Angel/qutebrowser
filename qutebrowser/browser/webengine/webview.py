@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -23,12 +23,13 @@ import functools
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QUrl, PYQT_VERSION
 from PyQt5.QtGui import QPalette
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
+from PyQt5.QtWebEngineWidgets import (QWebEngineView, QWebEnginePage,
+                                      QWebEngineScript)
 
 from qutebrowser.browser import shared
 from qutebrowser.browser.webengine import certificateerror, webenginesettings
 from qutebrowser.config import config
-from qutebrowser.utils import log, debug, usertypes, jinja, urlutils, message
+from qutebrowser.utils import log, debug, usertypes, jinja, objreg, qtutils
 
 
 class WebEngineView(QWebEngineView):
@@ -122,10 +123,12 @@ class WebEnginePage(QWebEnginePage):
     Signals:
         certificate_error: Emitted on certificate errors.
         shutting_down: Emitted when the page is shutting down.
+        navigation_request: Emitted on acceptNavigationRequest.
     """
 
     certificate_error = pyqtSignal()
     shutting_down = pyqtSignal()
+    navigation_request = pyqtSignal(usertypes.NavigationRequest)
 
     def __init__(self, *, theme_color, profile, parent=None):
         super().__init__(profile, parent)
@@ -135,6 +138,7 @@ class WebEnginePage(QWebEnginePage):
         self._theme_color = theme_color
         self._set_bg_color()
         config.instance.changed.connect(self._set_bg_color)
+        self.urlChanged.connect(self._inject_userjs)
 
     @config.change_filter('colors.webpage.bg')
     def _set_bg_color(self):
@@ -239,10 +243,12 @@ class WebEnginePage(QWebEnginePage):
         """Override javaScriptConfirm to use qutebrowser prompts."""
         if self._is_shutting_down:
             return False
+        escape_msg = qtutils.version_check('5.11', compiled=False)
         try:
             return shared.javascript_confirm(url, js_msg,
                                              abort_on=[self.loadStarted,
-                                                       self.shutting_down])
+                                                       self.shutting_down],
+                                             escape_msg=escape_msg)
         except shared.CallSuper:
             return super().javaScriptConfirm(url, js_msg)
 
@@ -252,12 +258,14 @@ class WebEnginePage(QWebEnginePage):
         # https://www.riverbankcomputing.com/pipermail/pyqt/2016-November/038293.html
         def javaScriptPrompt(self, url, js_msg, default):
             """Override javaScriptPrompt to use qutebrowser prompts."""
+            escape_msg = qtutils.version_check('5.11', compiled=False)
             if self._is_shutting_down:
                 return (False, "")
             try:
                 return shared.javascript_prompt(url, js_msg, default,
                                                 abort_on=[self.loadStarted,
-                                                          self.shutting_down])
+                                                          self.shutting_down],
+                                                escape_msg=escape_msg)
             except shared.CallSuper:
                 return super().javaScriptPrompt(url, js_msg, default)
 
@@ -265,10 +273,12 @@ class WebEnginePage(QWebEnginePage):
         """Override javaScriptAlert to use qutebrowser prompts."""
         if self._is_shutting_down:
             return
+        escape_msg = qtutils.version_check('5.11', compiled=False)
         try:
             shared.javascript_alert(url, js_msg,
                                     abort_on=[self.loadStarted,
-                                              self.shutting_down])
+                                              self.shutting_down],
+                                    escape_msg=escape_msg)
         except shared.CallSuper:
             super().javaScriptAlert(url, js_msg)
 
@@ -285,18 +295,63 @@ class WebEnginePage(QWebEnginePage):
                                 url: QUrl,
                                 typ: QWebEnginePage.NavigationType,
                                 is_main_frame: bool):
-        """Override acceptNavigationRequest to handle clicked links.
+        """Override acceptNavigationRequest to forward it to the tab API."""
+        type_map = {
+            QWebEnginePage.NavigationTypeLinkClicked:
+                usertypes.NavigationRequest.Type.link_clicked,
+            QWebEnginePage.NavigationTypeTyped:
+                usertypes.NavigationRequest.Type.typed,
+            QWebEnginePage.NavigationTypeFormSubmitted:
+                usertypes.NavigationRequest.Type.form_submitted,
+            QWebEnginePage.NavigationTypeBackForward:
+                usertypes.NavigationRequest.Type.back_forward,
+            QWebEnginePage.NavigationTypeReload:
+                usertypes.NavigationRequest.Type.reloaded,
+            QWebEnginePage.NavigationTypeOther:
+                usertypes.NavigationRequest.Type.other,
+        }
+        navigation = usertypes.NavigationRequest(url=url,
+                                                 navigation_type=type_map[typ],
+                                                 is_main_frame=is_main_frame)
+        self.navigation_request.emit(navigation)
+        return navigation.accepted
 
-        This only show an error on invalid links - everything else is handled
-        in createWindow.
-        """
-        log.webview.debug("navigation request: url {}, type {}, is_main_frame "
-                          "{}".format(url.toDisplayString(),
-                                      debug.qenum_key(QWebEnginePage, typ),
-                                      is_main_frame))
-        if (typ == QWebEnginePage.NavigationTypeLinkClicked and
-                not url.isValid()):
-            msg = urlutils.get_errstring(url, "Invalid link clicked")
-            message.error(msg)
-            return False
-        return True
+    @pyqtSlot('QUrl')
+    def _inject_userjs(self, url):
+        """Inject userscripts registered for `url` into the current page."""
+        if qtutils.version_check('5.8'):
+            # Handled in webenginetab with the builtin Greasemonkey
+            # support.
+            return
+
+        # Using QWebEnginePage.scripts() to hold the user scripts means
+        # we don't have to worry ourselves about where to inject the
+        # page but also means scripts hang around for the tab lifecycle.
+        # So clear them here.
+        scripts = self.scripts()
+        for script in scripts.toList():
+            if script.name().startswith("GM-"):
+                log.greasemonkey.debug("Removing script: {}"
+                                       .format(script.name()))
+                removed = scripts.remove(script)
+                assert removed, script.name()
+
+        def _add_script(script, injection_point):
+            new_script = QWebEngineScript()
+            new_script.setInjectionPoint(injection_point)
+            new_script.setWorldId(QWebEngineScript.MainWorld)
+            new_script.setSourceCode(script.code())
+            new_script.setName("GM-{}".format(script.name))
+            new_script.setRunsOnSubFrames(script.runs_on_sub_frames)
+            log.greasemonkey.debug("Adding script: {}"
+                                   .format(new_script.name()))
+            scripts.insert(new_script)
+
+        greasemonkey = objreg.get('greasemonkey')
+        matching_scripts = greasemonkey.scripts_for(url)
+        for script in matching_scripts.start:
+            _add_script(script, QWebEngineScript.DocumentCreation)
+        for script in matching_scripts.end:
+            _add_script(script, QWebEngineScript.DocumentReady)
+        for script in matching_scripts.idle:
+            _add_script(script, QWebEngineScript.Deferred)

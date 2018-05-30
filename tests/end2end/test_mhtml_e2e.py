@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -20,11 +20,13 @@
 """Test mhtml downloads based on sample files."""
 
 import os
-import re
 import os.path
+import re
 import collections
 
 import pytest
+
+from qutebrowser.utils import qtutils
 
 
 def collect_tests():
@@ -51,6 +53,11 @@ def normalize_line(line):
     line = line.replace('Content-Type: application/x-javascript',
                         'Content-Type: application/javascript')
 
+    # Added with Qt 5.11
+    if (line.startswith('Snapshot-Content-Location: ') and
+            not qtutils.version_check('5.11', compiled=False)):
+        line = None
+
     return line
 
 
@@ -74,7 +81,8 @@ class DownloadDir:
 
     def compare_mhtml(self, filename):
         with open(filename, 'r', encoding='utf-8') as f:
-            expected_data = [normalize_line(line) for line in f]
+            expected_data = [normalize_line(line) for line in f
+                             if normalize_line(line) is not None]
         actual_data = self.read_file()
         actual_data = [normalize_line(line) for line in actual_data]
         assert actual_data == expected_data

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -30,12 +30,11 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QApplication, QSizePolicy
 from qutebrowser.commands import runners, cmdutils
 from qutebrowser.config import config, configfiles
 from qutebrowser.utils import (message, log, usertypes, qtutils, objreg, utils,
-                               jinja, debug)
+                               jinja)
 from qutebrowser.mainwindow import messageview, prompt
 from qutebrowser.completion import completionwidget, completer
 from qutebrowser.keyinput import modeman
-from qutebrowser.browser import (commands, downloadview, hints,
-                                 qtnetworkdownloads, downloads)
+from qutebrowser.browser import commands, downloadview, hints, downloads
 from qutebrowser.misc import crashsignal, keyhintwidget
 
 
@@ -94,13 +93,15 @@ def get_window(via_ipc, force_window=False, force_tab=False,
     return window.win_id
 
 
-def raise_window(window):
+def raise_window(window, alert=True):
     """Raise the given MainWindow object."""
     window.setWindowState(window.windowState() & ~Qt.WindowMinimized)
     window.setWindowState(window.windowState() | Qt.WindowActive)
     window.raise_()
     window.activateWindow()
-    QApplication.instance().alert(window)
+
+    if alert:
+        QApplication.instance().alert(window)
 
 
 def get_target_window():
@@ -131,7 +132,6 @@ class MainWindow(QWidget):
     Attributes:
         status: The StatusBar widget.
         tabbed_browser: The TabbedBrowser widget.
-        state_before_fullscreen: window state before activation of fullscreen.
         _downloadview: The DownloadView widget.
         _vbox: The main QVBoxLayout.
         _commandrunner: The main CommandRunner instance.
@@ -184,7 +184,8 @@ class MainWindow(QWidget):
             private = bool(private)
         self._private = private
         self.tabbed_browser = tabbedbrowser.TabbedBrowser(win_id=self.win_id,
-                                                          private=private)
+                                                          private=private,
+                                                          parent=self)
         objreg.register('tabbed-browser', self.tabbed_browser, scope='window',
                         window=self.win_id)
         self._init_command_dispatcher()
@@ -230,8 +231,7 @@ class MainWindow(QWidget):
         config.instance.changed.connect(self._on_config_changed)
 
         objreg.get("app").new_window.emit(self)
-
-        self.state_before_fullscreen = self.windowState()
+        self._set_decoration(config.val.window.hide_decoration)
 
     def _init_geometry(self, geometry):
         """Initialize the window geometry or load it from disk."""
@@ -300,11 +300,7 @@ class MainWindow(QWidget):
 
     def _init_downloadmanager(self):
         log.init.debug("Initializing downloads...")
-        qtnetwork_download_manager = qtnetworkdownloads.DownloadManager(
-            self.win_id, self)
-        objreg.register('qtnetwork-download-manager',
-                        qtnetwork_download_manager,
-                        scope='window', window=self.win_id)
+        qtnetwork_download_manager = objreg.get('qtnetwork-download-manager')
 
         try:
             webengine_download_manager = objreg.get(
@@ -320,7 +316,8 @@ class MainWindow(QWidget):
     def _init_completion(self):
         self._completion = completionwidget.CompletionView(self.win_id, self)
         cmd = objreg.get('status-command', scope='window', window=self.win_id)
-        completer_obj = completer.Completer(cmd, self._completion)
+        completer_obj = completer.Completer(cmd=cmd, win_id=self.win_id,
+                                            parent=self._completion)
         self._completion.selection_changed.connect(
             completer_obj.on_selection_changed)
         objreg.register('completion', self._completion, scope='window',
@@ -332,7 +329,7 @@ class MainWindow(QWidget):
                                                 self.tabbed_browser)
         objreg.register('command-dispatcher', dispatcher, scope='window',
                         window=self.win_id)
-        self.tabbed_browser.destroyed.connect(
+        self.tabbed_browser.widget.destroyed.connect(
             functools.partial(objreg.delete, 'command-dispatcher',
                               scope='window', window=self.win_id))
 
@@ -349,13 +346,15 @@ class MainWindow(QWidget):
         elif option == 'statusbar.position':
             self._add_widgets()
             self._update_overlay_geometries()
+        elif option == 'window.hide_decoration':
+            self._set_decoration(config.val.window.hide_decoration)
 
     def _add_widgets(self):
         """Add or readd all widgets to the VBox."""
-        self._vbox.removeWidget(self.tabbed_browser)
+        self._vbox.removeWidget(self.tabbed_browser.widget)
         self._vbox.removeWidget(self._downloadview)
         self._vbox.removeWidget(self.status)
-        widgets = [self.tabbed_browser]
+        widgets = [self.tabbed_browser.widget]
 
         downloads_position = config.val.downloads.position
         if downloads_position == 'top':
@@ -428,7 +427,6 @@ class MainWindow(QWidget):
         status = self._get_object('statusbar')
         keyparsers = self._get_object('keyparsers')
         completion_obj = self._get_object('completion')
-        tabs = self._get_object('tabbed-browser')
         cmd = self._get_object('status-command')
         message_bridge = self._get_object('message-bridge')
         mode_manager = self._get_object('mode-manager')
@@ -448,7 +446,7 @@ class MainWindow(QWidget):
             status.keystring.setText)
         cmd.got_cmd[str].connect(self._commandrunner.run_safely)
         cmd.got_cmd[str, int].connect(self._commandrunner.run_safely)
-        cmd.returnPressed.connect(tabs.on_cmd_return_pressed)
+        cmd.returnPressed.connect(self.tabbed_browser.on_cmd_return_pressed)
 
         # key hint popup
         for mode, parser in keyparsers.items():
@@ -466,38 +464,56 @@ class MainWindow(QWidget):
         message_bridge.s_maybe_reset_text.connect(status.txt.maybe_reset_text)
 
         # statusbar
-        tabs.current_tab_changed.connect(status.on_tab_changed)
+        self.tabbed_browser.current_tab_changed.connect(status.on_tab_changed)
 
-        tabs.cur_progress.connect(status.prog.setValue)
-        tabs.cur_load_finished.connect(status.prog.hide)
-        tabs.cur_load_started.connect(status.prog.on_load_started)
+        self.tabbed_browser.cur_progress.connect(status.prog.setValue)
+        self.tabbed_browser.cur_load_finished.connect(status.prog.hide)
+        self.tabbed_browser.cur_load_started.connect(
+            status.prog.on_load_started)
 
-        tabs.cur_scroll_perc_changed.connect(status.percentage.set_perc)
-        tabs.tab_index_changed.connect(status.tabindex.on_tab_index_changed)
+        self.tabbed_browser.cur_scroll_perc_changed.connect(
+            status.percentage.set_perc)
+        self.tabbed_browser.widget.tab_index_changed.connect(
+            status.tabindex.on_tab_index_changed)
 
-        tabs.cur_url_changed.connect(status.url.set_url)
-        tabs.cur_url_changed.connect(functools.partial(
-            status.backforward.on_tab_cur_url_changed, tabs=tabs))
-        tabs.cur_link_hovered.connect(status.url.set_hover_url)
-        tabs.cur_load_status_changed.connect(status.url.on_load_status_changed)
-        tabs.cur_fullscreen_requested.connect(self._on_fullscreen_requested)
-        tabs.cur_fullscreen_requested.connect(status.maybe_hide)
+        self.tabbed_browser.cur_url_changed.connect(status.url.set_url)
+        self.tabbed_browser.cur_url_changed.connect(functools.partial(
+            status.backforward.on_tab_cur_url_changed,
+            tabs=self.tabbed_browser))
+        self.tabbed_browser.cur_link_hovered.connect(status.url.set_hover_url)
+        self.tabbed_browser.cur_load_status_changed.connect(
+            status.url.on_load_status_changed)
+
+        self.tabbed_browser.cur_caret_selection_toggled.connect(
+            status.on_caret_selection_toggled)
+
+        self.tabbed_browser.cur_fullscreen_requested.connect(
+            self._on_fullscreen_requested)
+        self.tabbed_browser.cur_fullscreen_requested.connect(status.maybe_hide)
 
         # command input / completion
-        mode_manager.left.connect(tabs.on_mode_left)
+        mode_manager.left.connect(self.tabbed_browser.on_mode_left)
         cmd.clear_completion_selection.connect(
             completion_obj.on_clear_completion_selection)
         cmd.hide_completion.connect(completion_obj.hide)
 
+    def _set_decoration(self, hidden):
+        """Set the visibility of the window decoration via Qt."""
+        window_flags = Qt.Window
+        refresh_window = self.isVisible()
+        if hidden:
+            window_flags |= Qt.CustomizeWindowHint | Qt.NoDropShadowWindowHint
+        self.setWindowFlags(window_flags)
+        if refresh_window:
+            self.show()
+
     @pyqtSlot(bool)
     def _on_fullscreen_requested(self, on):
-        if on:
-            self.state_before_fullscreen = self.windowState()
-            self.showFullScreen()
-        elif self.isFullScreen():
-            self.setWindowState(self.state_before_fullscreen)
-        log.misc.debug('on: {}, state before fullscreen: {}'.format(
-            on, debug.qflags_key(Qt, self.state_before_fullscreen)))
+        if not config.val.content.windowed_fullscreen:
+            if on:
+                self.setWindowState(self.windowState() | Qt.WindowFullScreen)
+            elif self.isFullScreen():
+                self.setWindowState(self.windowState() & ~Qt.WindowFullScreen)
 
     @cmdutils.register(instance='main-window', scope='window')
     @pyqtSlot()
@@ -519,7 +535,7 @@ class MainWindow(QWidget):
         super().resizeEvent(e)
         self._update_overlay_geometries()
         self._downloadview.updateGeometry()
-        self.tabbed_browser.tabBar().refresh()
+        self.tabbed_browser.widget.tabBar().refresh()
 
     def showEvent(self, e):
         """Extend showEvent to register us as the last-visible-main-window.
@@ -548,7 +564,7 @@ class MainWindow(QWidget):
         if crashsignal.is_crashing:
             e.accept()
             return
-        tab_count = self.tabbed_browser.count()
+        tab_count = self.tabbed_browser.widget.count()
         download_model = objreg.get('download-model', scope='window',
                                     window=self.win_id)
         download_count = download_model.running_downloads()

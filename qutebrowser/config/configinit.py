@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2017-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -26,7 +26,8 @@ from PyQt5.QtWidgets import QMessageBox
 
 from qutebrowser.config import (config, configdata, configfiles, configtypes,
                                 configexc, configcommands)
-from qutebrowser.utils import objreg, usertypes, log, standarddir, message
+from qutebrowser.utils import (objreg, usertypes, log, standarddir, message,
+                               qtutils)
 from qutebrowser.misc import msgbox, objects
 
 
@@ -66,13 +67,13 @@ def early_init(args):
 
     configfiles.init()
 
-    objects.backend = get_backend(args)
-
     for opt, val in args.temp_settings:
         try:
             config.instance.set_str(opt, val)
         except configexc.Error as e:
             message.error("set: {} - {}".format(e.__class__.__name__, e))
+
+    objects.backend = get_backend(args)
 
     configtypes.Font.monospace_fonts = config.val.fonts.monospace
     config.instance.changed.connect(_update_monospace_fonts)
@@ -89,10 +90,11 @@ def _init_envvars():
     if config.val.qt.force_platform is not None:
         os.environ['QT_QPA_PLATFORM'] = config.val.qt.force_platform
 
-    if config.val.window.hide_wayland_decoration:
+    if config.val.window.hide_decoration:
         os.environ['QT_WAYLAND_DISABLE_WINDOWDECORATION'] = '1'
-    else:
-        os.environ.pop('QT_WAYLAND_DISABLE_WINDOWDECORATION', None)
+
+    if config.val.qt.highdpi:
+        os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
 
 
 @config.change_filter('fonts.monospace', function=True)
@@ -104,7 +106,9 @@ def _update_monospace_fonts():
             continue
         elif not isinstance(opt.typ, configtypes.Font):
             continue
-        elif not config.instance.get_obj(name).endswith(' monospace'):
+
+        value = config.instance.get_obj(name)
+        if value is None or not value.endswith(' monospace'):
             continue
 
         config.instance.changed.emit(name)
@@ -158,4 +162,12 @@ def qt_args(namespace):
             argv += ['--' + name, value]
 
     argv += ['--' + arg for arg in config.val.qt.args]
+
+    if (objects.backend == usertypes.Backend.QtWebEngine and
+            not qtutils.version_check('5.11', compiled=False)):
+        # WORKAROUND equivalent to
+        # https://codereview.qt-project.org/#/c/217932/
+        # Needed for Qt < 5.9.5 and < 5.10.1
+        argv.append('--disable-shared-workers')
+
     return argv

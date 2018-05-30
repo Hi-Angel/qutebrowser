@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -26,7 +26,7 @@ import ipaddress
 import posixpath
 import urllib.parse
 
-from PyQt5.QtCore import QUrl
+from PyQt5.QtCore import QUrl, QUrlQuery
 from PyQt5.QtNetwork import QHostInfo, QHostAddress, QNetworkProxy
 
 from qutebrowser.config import config
@@ -102,6 +102,12 @@ def _get_search_url(txt):
         engine = 'DEFAULT'
     template = config.val.url.searchengines[engine]
     url = qurl_from_user_input(template.format(urllib.parse.quote(term)))
+
+    if config.val.url.open_base_url and term in config.val.url.searchengines:
+        url = qurl_from_user_input(config.val.url.searchengines[term])
+        url.setPath(None)
+        url.setFragment(None)
+        url.setQuery(None)
     qtutils.ensure_valid(url)
     return url
 
@@ -192,7 +198,7 @@ def fuzzy_url(urlstr, cwd=None, relative=False, do_search=True,
         log.url.debug("URL is a fuzzy address")
         url = qurl_from_user_input(urlstr)
     log.url.debug("Converting fuzzy term {!r} to URL -> {}".format(
-                  urlstr, url.toDisplayString()))
+        urlstr, url.toDisplayString()))
     if do_search and config.val.url.auto_search != 'never' and urlstr:
         qtutils.ensure_valid(url)
     else:
@@ -241,7 +247,7 @@ def is_url(urlstr):
     autosearch = config.val.url.auto_search
 
     log.url.debug("Checking if {!r} is a URL (autosearch={}).".format(
-                  urlstr, autosearch))
+        urlstr, autosearch))
 
     urlstr = urlstr.strip()
     qurl = QUrl(urlstr)
@@ -306,7 +312,7 @@ def qurl_from_user_input(urlstr):
     """
     # First we try very liberally to separate something like an IPv6 from the
     # rest (e.g. path info or parameters)
-    match = re.match(r'\[?([0-9a-fA-F:.]+)\]?(.*)', urlstr.strip())
+    match = re.fullmatch(r'\[?([0-9a-fA-F:.]+)\]?(.*)', urlstr.strip())
     if match:
         ipstr, rest = match.groups()
     else:
@@ -372,10 +378,17 @@ def get_path_if_valid(pathstr, cwd=None, relative=False, check_exists=False):
         path = None
 
     if check_exists:
-        if path is not None and os.path.exists(path):
-            log.url.debug("URL is a local file")
-        else:
-            path = None
+        if path is not None:
+            try:
+                if os.path.exists(path):
+                    log.url.debug("URL is a local file")
+                else:
+                    path = None
+            except UnicodeEncodeError:
+                log.url.debug(
+                    "URL contains characters which are not present in the "
+                    "current locale")
+                path = None
 
     return path
 
@@ -530,7 +543,7 @@ def incdec_number(url, incdec, count=1, segments=None):
         incdec: Either 'increment' or 'decrement'
         count: The number to increment or decrement by
         segments: A set of URL segments to search. Valid segments are:
-                  'host', 'path', 'query', 'anchor'.
+                  'host', 'port', 'path', 'query', 'anchor'.
                   Default: {'path', 'query'}
 
     Return:
@@ -543,7 +556,7 @@ def incdec_number(url, incdec, count=1, segments=None):
 
     if segments is None:
         segments = {'path', 'query'}
-    valid_segments = {'host', 'path', 'query', 'anchor'}
+    valid_segments = {'host', 'port', 'path', 'query', 'anchor'}
     if segments - valid_segments:
         extra_elements = segments - valid_segments
         raise IncDecError("Invalid segments: {}".format(
@@ -554,6 +567,8 @@ def incdec_number(url, incdec, count=1, segments=None):
     # Order as they appear in a URL
     segment_modifiers = [
         ('host', url.host, url.setHost),
+        ('port', lambda: str(url.port()) if url.port() > 0 else '',
+         lambda x: url.setPort(int(x))),
         ('path', url.path, url.setPath),
         ('query', url.query, url.setQuery),
         ('anchor', url.fragment, url.setFragment),
@@ -564,7 +579,7 @@ def incdec_number(url, incdec, count=1, segments=None):
             continue
 
         # Get the last number in a string
-        match = re.match(r'(.*\D|^)(0*)(\d+)(.*)', getter())
+        match = re.fullmatch(r'(.*\D|^)(0*)(\d+)(.*)', getter())
         if not match:
             continue
 
@@ -613,6 +628,18 @@ def safe_display_string(qurl):
             return '({}) {}'.format(host, qurl.toDisplayString())
 
     return qurl.toDisplayString()
+
+
+def query_string(qurl):
+    """Get a query string for the given URL.
+
+    This is a WORKAROUND for:
+    https://www.riverbankcomputing.com/pipermail/pyqt/2017-November/039702.html
+    """
+    try:
+        return qurl.query()
+    except AttributeError:  # pragma: no cover
+        return QUrlQuery(qurl).query()
 
 
 class InvalidProxyTypeError(Exception):

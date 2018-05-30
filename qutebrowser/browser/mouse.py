@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -19,13 +19,11 @@
 
 """Mouse handling for a browser tab."""
 
+from PyQt5.QtCore import QObject, QEvent, Qt, QTimer
 
 from qutebrowser.config import config
-from qutebrowser.utils import message, log, usertypes
+from qutebrowser.utils import message, log, usertypes, qtutils
 from qutebrowser.keyinput import modeman
-
-
-from PyQt5.QtCore import QObject, QEvent, Qt, QTimer
 
 
 class ChildEventFilter(QObject):
@@ -56,6 +54,14 @@ class ChildEventFilter(QObject):
                 obj, child))
             assert obj is self._widget
             child.installEventFilter(self._filter)
+
+            if qtutils.version_check('5.11', compiled=False, exact=True):
+                # WORKAROUND for https://bugreports.qt.io/browse/QTBUG-68076
+                QTimer.singleShot(0, self._widget.setFocus)
+        elif event.type() == QEvent.ChildRemoved:
+            child = event.child()
+            log.mouse.debug("{}: removed child {}".format(obj, child))
+
         return False
 
 
@@ -153,8 +159,9 @@ class MouseEventFilter(QObject):
 
         if elem.is_editable():
             log.mouse.debug("Clicked editable element!")
-            modeman.enter(self._tab.win_id, usertypes.KeyMode.insert,
-                          'click', only_if_normal=True)
+            if config.val.input.insert_mode.auto_enter:
+                modeman.enter(self._tab.win_id, usertypes.KeyMode.insert,
+                              'click', only_if_normal=True)
         else:
             log.mouse.debug("Clicked non-editable element!")
             if config.val.input.insert_mode.auto_leave:

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -47,10 +47,10 @@ def update_documentation():
         return
 
     try:
-        subprocess.call(['asciidoc'], stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL)
+        subprocess.run(['asciidoc'], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
     except OSError:
         pytest.skip("Docs outdated and asciidoc unavailable!")
 
     update_script = os.path.join(script_path, 'asciidoc2html.py')
-    subprocess.call([sys.executable, update_script])
+    subprocess.run([sys.executable, update_script])

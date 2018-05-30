@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Daniel Schadt
+# Copyright 2015-2018 Daniel Schadt
 #
 # This file is part of qutebrowser.
 #
@@ -195,7 +195,6 @@ def test_enter_folder_smoke(dir_layout, quteproc):
 
 @pytest.mark.parametrize('folder', DirLayout.layout_folders())
 def test_enter_folder(dir_layout, quteproc, folder):
-    # pylint: disable=not-an-iterable
     quteproc.open_url(dir_layout.file_url())
     quteproc.click_element_by_text(text=folder)
     expected_url = urlutils.file_url(dir_layout.path(folder))

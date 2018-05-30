@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -20,10 +20,10 @@
 """Fixtures to run qutebrowser in a QProcess and communicate."""
 
 import os
+import os.path
 import re
 import sys
 import time
-import os.path
 import datetime
 import logging
 import tempfile
@@ -33,10 +33,10 @@ import json
 
 import yaml
 import pytest
-from PyQt5.QtCore import pyqtSignal, QUrl
+from PyQt5.QtCore import pyqtSignal, QUrl, qVersion
 
 from qutebrowser.misc import ipc
-from qutebrowser.utils import log, utils, javascript
+from qutebrowser.utils import log, utils, javascript, qtutils
 from helpers import utils as testutils
 from end2end.fixtures import testprocess
 
@@ -44,68 +44,69 @@ from end2end.fixtures import testprocess
 instance_counter = itertools.count()
 
 
-def is_ignored_qt_message(message):
+def is_ignored_qt_message(pytestconfig, message):
     """Check if the message is listed in qt_log_ignore."""
-    regexes = pytest.config.getini('qt_log_ignore')
+    regexes = pytestconfig.getini('qt_log_ignore')
     for regex in regexes:
-        if re.match(regex, message):
+        if re.search(regex, message):
             return True
     return False
 
 
 def is_ignored_lowlevel_message(message):
     """Check if we want to ignore a lowlevel process output."""
-    if message.startswith('Xlib: sequence lost'):
+    ignored_messages = [
         # https://travis-ci.org/qutebrowser/qutebrowser/jobs/157941720
         # ???
-        return True
-    elif ("_dl_allocate_tls_init: Assertion `listp->slotinfo[cnt].gen <= "
-          "GL(dl_tls_generation)' failed!" in message):
+        'Xlib: sequence lost*',
         # Started appearing with Qt 5.8...
         # http://patchwork.sourceware.org/patch/10255/
-        return True
-    elif message == 'getrlimit(RLIMIT_NOFILE) failed':
-        return True
-    # Travis CI containers don't have a /etc/machine-id
-    elif message.endswith('D-Bus library appears to be incorrectly set up; '
-                          'failed to read machine uuid: Failed to open '
-                          '"/etc/machine-id": No such file or directory'):
-        return True
-    elif message == ('See the manual page for dbus-uuidgen to correct this '
-                     'issue.'):
-        return True
-    # Travis CI macOS:
-    # 2017-09-11 07:32:56.191 QtWebEngineProcess[5455:28501] Couldn't set
-    # selectedTextBackgroundColor from default ()
-    elif message.endswith("Couldn't set selectedTextBackgroundColor from "
-                          "default ()"):
-        return True
-    # Mac Mini:
-    # <<<< VTVideoEncoderSelection >>>>
-    # VTSelectAndCreateVideoEncoderInstanceInternal: no video encoder found for
-    # 'avc1'
-    #
-    # [22:32:03.636] VTSelectAndCreateVideoEncoderInstanceInternal signalled
-    # err=-12908 (err) (Video encoder not available) at
-    # /SourceCache/CoreMedia_frameworks/CoreMedia-1562.240/Sources/
-    # VideoToolbox/VTVideoEncoderSelection.c line 1245
-    #
-    # [22:32:03.636] VTCompressionSessionCreate signalled err=-12908 (err)
-    # (Could not select and open encoder instance) at
-    # /SourceCache/CoreMedia_frameworks/CoreMedia-1562.240/Sources/
-    # VideoToolbox/VTCompressionSession.c # line 946
-    elif 'VTSelectAndCreateVideoEncoderInstanceInternal' in message:
-        return True
-    elif 'VTSelectAndCreateVideoEncoderInstanceInternal' in message:
-        return True
-    elif 'VTCompressionSessionCreate' in message:
-        return True
-    # During shutdown on AppVeyor:
-    # https://ci.appveyor.com/project/qutebrowser/qutebrowser/build/master-2089/job/or4tbct1oeqsfhfm
-    elif (message.startswith('QNetworkProxyFactory: factory 0x') and
-          message.endswith(' has returned an empty result set')):
-        return True
-    return False
+        ("*_dl_allocate_tls_init: Assertion `listp->slotinfo[cnt].gen <= "
+         "GL(dl_tls_generation)' failed!*"),
+        # ???
+        'getrlimit(RLIMIT_NOFILE) failed',
+        # Travis CI containers don't have a /etc/machine-id
+        ('*D-Bus library appears to be incorrectly set up; failed to read '
+         'machine uuid: Failed to open "/etc/machine-id": No such file or '
+         'directory'),
+        'See the manual page for dbus-uuidgen to correct this issue.',
+        # Travis CI macOS:
+        # 2017-09-11 07:32:56.191 QtWebEngineProcess[5455:28501] Couldn't set
+        # selectedTextBackgroundColor from default ()
+        "* Couldn't set selectedTextBackgroundColor from default ()",
+        # Mac Mini:
+        # <<<< VTVideoEncoderSelection >>>>
+        # VTSelectAndCreateVideoEncoderInstanceInternal: no video encoder
+        # found for 'avc1'
+        #
+        # [22:32:03.636] VTSelectAndCreateVideoEncoderInstanceInternal
+        # signalled err=-12908 (err) (Video encoder not available) at
+        # /SourceCache/CoreMedia_frameworks/CoreMedia-1562.240/Sources/
+        # VideoToolbox/VTVideoEncoderSelection.c line 1245
+        #
+        # [22:32:03.636] VTCompressionSessionCreate signalled err=-12908 (err)
+        # (Could not select and open encoder instance) at
+        # /SourceCache/CoreMedia_frameworks/CoreMedia-1562.240/Sources/
+        # VideoToolbox/VTCompressionSession.c # line 946
+        '*VTSelectAndCreateVideoEncoderInstanceInternal*',
+        '*VTSelectAndCreateVideoEncoderInstanceInternal*',
+        '*VTCompressionSessionCreate*',
+        # During shutdown on AppVeyor:
+        # https://ci.appveyor.com/project/qutebrowser/qutebrowser/build/master-2089/job/or4tbct1oeqsfhfm
+        'QNetworkProxyFactory: factory 0x* has returned an empty result set',
+        # Qt 5.10 with debug Chromium
+        # [1016/155149.941048:WARNING:stack_trace_posix.cc(625)] Failed to open
+        # file: /home/florian/#14687139 (deleted)
+        #   Error: No such file or directory
+        '  Error: No such file or directory',
+        # Qt 5.7.1
+        'qt.network.ssl: QSslSocket: cannot call unresolved function *',
+        # Qt 5.11
+        # DevTools listening on ws://127.0.0.1:37945/devtools/browser/...
+        'DevTools listening on *',
+    ]
+    return any(testutils.pattern_match(pattern=pattern, value=message)
+               for pattern in ignored_messages)
 
 
 def is_ignored_chromium_message(line):
@@ -141,6 +142,12 @@ def is_ignored_chromium_message(line):
         # channel message
         'Invalid node channel message',
 
+        # Qt 5.9.3
+        # [30217:30229:1124/141512.682110:ERROR:
+        # cert_verify_proc_openssl.cc(212)]
+        # X509 Verification error self signed certificate : 18 : 0 : 4
+        'X509 Verification error self signed certificate : 18 : 0 : 4',
+
         # Not reproducible anymore?
 
         'Running without the SUID sandbox! *',
@@ -150,7 +157,7 @@ def is_ignored_chromium_message(line):
         'Invalid node channel message *',
         # Makes tests fail on Quantumcross' machine
         ('CreatePlatformSocket() returned an error, errno=97: Address family'
-            'not supported by protocol'),
+         'not supported by protocol'),
 
         # Qt 5.9 with debug Chromium
 
@@ -165,10 +172,16 @@ def is_ignored_chromium_message(line):
         # /tmp/pytest-of-florian/pytest-32/test_webengine_download_suffix0/
         # downloads/download.bin: Operation not supported
         ('Could not set extended attribute user.xdg.* on file *: '
-            'Operation not supported'),
+         'Operation not supported*'),
         # [5947:5947:0605/192837.856931:ERROR:render_process_impl.cc(112)]
         # WebFrame LEAKED 1 TIMES
         'WebFrame LEAKED 1 TIMES',
+
+        # Qt 5.10 with debug Chromium
+        # [1016/155149.941048:WARNING:stack_trace_posix.cc(625)] Failed to open
+        # file: /home/florian/#14687139 (deleted)
+        #   Error: No such file or directory
+        'Failed to open file: * (deleted)',
 
         # macOS on Travis
         # [5140:5379:0911/063441.239771:ERROR:mach_port_broker.mm(175)]
@@ -178,6 +191,19 @@ def is_ignored_chromium_message(line):
         # on receiving Mach ports FFA56F125F699ADB.E28E252911A8704B. Dropping
         # message.
         'Error on receiving Mach ports *. Dropping message.',
+
+        # [2734:2746:1107/131154.072032:ERROR:nss_ocsp.cc(591)] No
+        # URLRequestContext for NSS HTTP handler. host: ocsp.digicert.com
+        'No URLRequestContext for NSS HTTP handler. host: *',
+
+        # https://bugreports.qt.io/browse/QTBUG-66661
+        # [23359:23359:0319/115812.168578:WARNING:
+        # render_frame_host_impl.cc(2744)] OnDidStopLoading was called twice.
+        'OnDidStopLoading was called twice.',
+
+        # [30412:30412:0323/074933.387250:ERROR:node_channel.cc(899)] Dropping
+        # message on closed channel.
+        'Dropping message on closed channel.',
     ]
     return any(testutils.pattern_match(pattern=pattern, value=message)
                for pattern in ignored_messages)
@@ -193,7 +219,7 @@ class LogLine(testprocess.Line):
         expected: Whether the message was expected or not.
     """
 
-    def __init__(self, data):
+    def __init__(self, pytestconfig, data):
         super().__init__(data)
         try:
             line = json.loads(data)
@@ -215,7 +241,7 @@ class LogLine(testprocess.Line):
         self.traceback = line.get('traceback')
         self.message = line['message']
 
-        self.expected = is_ignored_qt_message(self.message)
+        self.expected = is_ignored_qt_message(pytestconfig, self.message)
         self.use_color = False
 
     def __str__(self):
@@ -285,14 +311,13 @@ class QuteProc(testprocess.Process):
             'message']
 
     def __init__(self, request, *, parent=None):
-        super().__init__(parent)
+        super().__init__(request, parent)
         self._ipc_socket = None
         self.basedir = None
         self._focus_ready = False
         self._load_ready = False
         self._instance_id = next(instance_counter)
         self._run_counter = itertools.count()
-        self.request = request
 
     def _is_ready(self, what):
         """Called by _parse_line if loading/focusing is done.
@@ -306,6 +331,8 @@ class QuteProc(testprocess.Process):
         else:
             raise ValueError("Invalid value {!r} for 'what'.".format(what))
         if self._load_ready and self._focus_ready:
+            self._load_ready = False
+            self._focus_ready = False
             self.ready.emit()
 
     def _process_line(self, log_line):
@@ -330,6 +357,10 @@ class QuteProc(testprocess.Process):
             # when calling QApplication::sync
             "Focus object changed: "
             "<PyQt5.QtWidgets.QWidget object at *>",
+            # Qt >= 5.11
+            "Focus object changed: "
+            "<qutebrowser.browser.webengine.webview.WebEngineView object "
+            "at *>",
         ]
 
         if (log_line.category == 'ipc' and
@@ -341,9 +372,10 @@ class QuteProc(testprocess.Process):
             if not self._load_ready:
                 log_line.waited_for = True
             self._is_ready('load')
-        elif log_line.category == 'misc' and any(testutils.pattern_match(
-                pattern=pattern, value=log_line.message) for pattern in
-                start_okay_messages_focus):
+        elif (log_line.category == 'misc' and any(
+                testutils.pattern_match(pattern=pattern,
+                                        value=log_line.message)
+                for pattern in start_okay_messages_focus)):
             self._is_ready('focus')
         elif (log_line.category == 'init' and
               log_line.module == 'standarddir' and
@@ -355,11 +387,11 @@ class QuteProc(testprocess.Process):
 
     def _parse_line(self, line):
         try:
-            log_line = LogLine(line)
+            log_line = LogLine(self.request.config, line)
         except testprocess.InvalidLine:
             if not line.strip():
                 return None
-            elif (is_ignored_qt_message(line) or
+            elif (is_ignored_qt_message(self.request.config, line) or
                   is_ignored_lowlevel_message(line) or
                   is_ignored_chromium_message(line) or
                   self.request.node.get_marker('no_invalid_lines')):
@@ -404,10 +436,14 @@ class QuteProc(testprocess.Process):
 
     def _default_args(self):
         backend = 'webengine' if self.request.config.webengine else 'webkit'
-        return ['--debug', '--no-err-windows', '--temp-basedir',
+        args = ['--debug', '--no-err-windows', '--temp-basedir',
                 '--json-logging', '--loglevel', 'vdebug',
-                '--backend', backend, '--debug-flag', 'no-sql-history',
-                'about:blank']
+                '--backend', backend, '--debug-flag', 'no-sql-history']
+        if qVersion() == '5.7.1':
+            # https://github.com/qutebrowser/qutebrowser/issues/3163
+            args += ['--qt-flag', 'disable-seccomp-filter-sandbox']
+        args.append('about:blank')
+        return args
 
     def path_to_url(self, path, *, port=None, https=False):
         """Get a URL based on a filename for the localhost webserver.
@@ -507,6 +543,7 @@ class QuteProc(testprocess.Process):
         super().before_test()
         self.send_cmd(':config-clear')
         self._init_settings()
+        self.clear_data()
 
     def _init_settings(self):
         """Adjust some qutebrowser settings after starting."""
@@ -557,6 +594,12 @@ class QuteProc(testprocess.Process):
         ipc.send_to_running_instance(self._ipc_socket, commands, target_arg)
         self.wait_for(category='ipc', module='ipc', function='on_ready_read',
                       message='Read from socket *')
+
+    def start(self, *args, wait_focus=True,
+              **kwargs):  # pylint: disable=arguments-differ
+        if not wait_focus:
+            self._focus_ready = True
+        super().start(*args, **kwargs)
 
     def send_cmd(self, command, count=None, invalid=False, *, escape=True):
         """Send a command to the running qutebrowser instance.
@@ -656,20 +699,29 @@ class QuteProc(testprocess.Process):
             else:
                 timeout = 5000
 
-        # We really need the same representation that the webview uses in its
-        # __repr__
         qurl = QUrl(url)
         if not qurl.isValid():
             raise ValueError("Invalid URL {}: {}".format(url,
                                                          qurl.errorString()))
-        url = utils.elide(qurl.toDisplayString(QUrl.EncodeUnicode), 100)
-        assert url
 
-        pattern = re.compile(
-            r"(load status for <qutebrowser\.browser\..* "
-            r"tab_id=\d+ url='{url}/?'>: LoadStatus\.{load_status}|fetch: "
-            r"PyQt5\.QtCore\.QUrl\('{url}'\) -> .*)".format(
-                load_status=re.escape(load_status), url=re.escape(url)))
+        if (qurl == QUrl('about:blank') and
+                not qtutils.version_check('5.10', compiled=False)):
+            # For some reason, we don't get a LoadStatus.success for
+            # about:blank sometimes.
+            # However, if we do this for Qt 5.10, we get general testsuite
+            # instability as site loads get reported with about:blank...
+            pattern = "Changing title for idx * to 'about:blank'"
+        else:
+            # We really need the same representation that the webview uses in
+            # its __repr__
+            url = utils.elide(qurl.toDisplayString(QUrl.EncodeUnicode), 100)
+            assert url
+
+            pattern = re.compile(
+                r"(load status for <qutebrowser\.browser\..* "
+                r"tab_id=\d+ url='{url}/?'>: LoadStatus\.{load_status}|fetch: "
+                r"PyQt5\.QtCore\.QUrl\('{url}'\) -> .*)".format(
+                    load_status=re.escape(load_status), url=re.escape(url)))
 
         try:
             self.wait_for(message=pattern, timeout=timeout)
@@ -748,18 +800,25 @@ class QuteProc(testprocess.Process):
         be compared.
         """
         __tracebackhide__ = lambda e: e.errisinstance(pytest.fail.Exception)
-        # Translate ... to ellipsis in YAML.
-        loader = yaml.SafeLoader(expected)
-        loader.add_constructor('!ellipsis', lambda loader, node: ...)
-        loader.add_implicit_resolver('!ellipsis', re.compile(r'\.\.\.'), None)
-
         data = self.get_session()
-        expected = loader.get_data()
+        expected = yaml.load(expected, Loader=YamlLoader)
         outcome = testutils.partial_compare(data, expected)
         if not outcome:
             msg = "Session comparison failed: {}".format(outcome.error)
             msg += '\nsee stdout for details'
             pytest.fail(msg)
+
+
+class YamlLoader(yaml.SafeLoader):
+
+    """Custom YAML loader used in compare_session."""
+
+    pass
+
+
+# Translate ... to ellipsis in YAML.
+YamlLoader.add_constructor('!ellipsis', lambda loader, node: ...)
+YamlLoader.add_implicit_resolver('!ellipsis', re.compile(r'\.\.\.'), None)
 
 
 def _xpath_escape(text):

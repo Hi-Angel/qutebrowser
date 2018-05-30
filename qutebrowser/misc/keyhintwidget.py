@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -34,6 +34,7 @@ from PyQt5.QtCore import pyqtSlot, pyqtSignal, Qt
 from qutebrowser.config import config
 from qutebrowser.utils import utils, usertypes
 from qutebrowser.commands import cmdutils
+from qutebrowser.keyinput import keyutils
 
 
 class KeyHintView(QLabel):
@@ -54,9 +55,9 @@ class KeyHintView(QLabel):
             background-color: {{ conf.colors.keyhint.bg }};
             padding: 6px;
             {% if conf.statusbar.position == 'top' %}
-                border-bottom-right-radius: 6px;
+                border-bottom-right-radius: {{ conf.keyhint.radius }}px;
             {% else %}
-                border-top-right-radius: 6px;
+                border-top-right-radius: {{ conf.keyhint.radius }}px;
             {% endif %}
         }
     """
@@ -87,7 +88,7 @@ class KeyHintView(QLabel):
         Args:
             prefix: The current partial keystring.
         """
-        countstr, prefix = re.match(r'^(\d*)(.*)', prefix).groups()
+        countstr, prefix = re.fullmatch(r'(\d*)(.*)', prefix).groups()
         if not prefix:
             self._show_timer.stop()
             self.hide()
@@ -105,9 +106,8 @@ class KeyHintView(QLabel):
 
         bindings_dict = config.key_instance.get_bindings_for(modename)
         bindings = [(k, v) for (k, v) in sorted(bindings_dict.items())
-                    if k.startswith(prefix) and
-                    not utils.is_special_key(k) and
-                    not blacklisted(k) and
+                    if keyutils.KeySequence.parse(prefix).matches(k) and
+                    not blacklisted(str(k)) and
                     (takes_count(v) or not countstr)]
 
         if not bindings:
@@ -120,7 +120,7 @@ class KeyHintView(QLabel):
         suffix_color = html.escape(config.val.colors.keyhint.suffix.fg)
 
         text = ''
-        for key, cmd in bindings:
+        for seq, cmd in bindings:
             text += (
                 "<tr>"
                 "<td>{}</td>"
@@ -130,7 +130,7 @@ class KeyHintView(QLabel):
             ).format(
                 html.escape(prefix),
                 suffix_color,
-                html.escape(key[len(prefix):]),
+                html.escape(str(seq)[len(prefix):]),
                 html.escape(cmd)
             )
         text = '<table>{}</table>'.format(text)

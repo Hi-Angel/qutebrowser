@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -65,7 +65,8 @@ def completer_obj(qtbot, status_command_stub, config_stub, monkeypatch, stubs,
     """Create the completer used for testing."""
     monkeypatch.setattr(completer, 'QTimer', stubs.InstaTimer)
     config_stub.val.completion.show = 'auto'
-    return completer.Completer(status_command_stub, completion_widget_stub)
+    return completer.Completer(cmd=status_command_stub, win_id=0,
+                               parent=completion_widget_stub)
 
 
 @pytest.fixture(autouse=True)
@@ -128,12 +129,20 @@ def cmdutils_patch(monkeypatch, stubs, miscmodels_patch):
         """docstring."""
         pass
 
+    @cmdutils.argument('option', completion=miscmodels_patch.option)
+    @cmdutils.argument('values', completion=miscmodels_patch.value)
+    def config_cycle(option, *values):
+        """For testing varargs."""
+        pass
+
     cmd_utils = stubs.FakeCmdUtils({
         'set': command.Command(name='set', handler=set_command),
         'help': command.Command(name='help', handler=show_help),
         'open': command.Command(name='open', handler=openurl, maxsplit=0),
         'bind': command.Command(name='bind', handler=bind),
         'tab-detach': command.Command(name='tab-detach', handler=tab_detach),
+        'config-cycle': command.Command(name='config-cycle',
+                                        handler=config_cycle),
     })
     monkeypatch.setattr(completer, 'cmdutils', cmd_utils)
 
@@ -159,7 +168,7 @@ def _set_cmd_prompt(cmd, txt):
     (':set general editor |', 'value', '', ['general', 'editor']),
     (':set general editor gv|', 'value', 'gv', ['general', 'editor']),
     (':set general editor "gvim -f"|', 'value', 'gvim -f',
-        ['general', 'editor']),
+     ['general', 'editor']),
     (':set general editor "gvim |', 'value', 'gvim', ['general', 'editor']),
     (':set general huh |', 'value', '', ['general', 'huh']),
     (':help |', 'helptopic', '', []),
@@ -189,6 +198,11 @@ def _set_cmd_prompt(cmd, txt):
     (':gibberish nonesense |', None, '', []),
     ('/:help|', None, '', []),
     ('::bind|', 'command', ':bind', []),
+    (':-w open |', None, '', []),
+    # varargs
+    (':config-cycle option |', 'value', '', ['option']),
+    (':config-cycle option one |', 'value', '', ['option', 'one']),
+    (':config-cycle option one two |', 'value', '', ['option', 'one', 'two']),
 ])
 def test_update_completion(txt, kind, pattern, pos_args, status_command_stub,
                            completer_obj, completion_widget_stub, config_stub,
@@ -198,7 +212,7 @@ def test_update_completion(txt, kind, pattern, pos_args, status_command_stub,
     _set_cmd_prompt(status_command_stub, txt)
     completer_obj.schedule_completion_update()
     if kind is None:
-        assert completion_widget_stub.set_pattern.call_count == 0
+        assert not completion_widget_stub.set_pattern.called
     else:
         assert completion_widget_stub.set_model.call_count == 1
         model = completion_widget_stub.set_model.call_args[0][0]
@@ -207,6 +221,32 @@ def test_update_completion(txt, kind, pattern, pos_args, status_command_stub,
         assert model.info.config == config_stub
         assert model.info.keyconf == key_config_stub
         completion_widget_stub.set_pattern.assert_called_once_with(pattern)
+
+
+@pytest.mark.parametrize('txt1, txt2, regen', [
+    (':config-cycle |', ':config-cycle a|', False),
+    (':config-cycle abc|', ':config-cycle abc |', True),
+    (':config-cycle abc |', ':config-cycle abc d|', False),
+    (':config-cycle abc def|', ':config-cycle abc def |', True),
+    # open has maxsplit=0, so all args just set the pattern, not the model
+    (':open |', ':open a|', False),
+    (':open abc|', ':open abc |', False),
+    (':open abc |', ':open abc d|', False),
+    (':open abc def|', ':open abc def |', False),
+])
+def test_regen_completion(txt1, txt2, regen, status_command_stub,
+                          completer_obj, completion_widget_stub, config_stub,
+                          key_config_stub):
+    """Test that the completion function is only called as needed."""
+    # set the initial state
+    _set_cmd_prompt(status_command_stub, txt1)
+    completer_obj.schedule_completion_update()
+    completion_widget_stub.set_model.reset_mock()
+
+    # "move" the cursor and check if the completion function was called
+    _set_cmd_prompt(status_command_stub, txt2)
+    completer_obj.schedule_completion_update()
+    assert completion_widget_stub.set_model.called == regen
 
 
 @pytest.mark.parametrize('before, newtxt, after', [
@@ -274,7 +314,11 @@ def test_on_selection_changed(before, newtxt, after, completer_obj,
     check(True, 2, after_txt, after_pos)
 
     # quick-completing a single item should move the cursor ahead by 1 and add
-    # a trailing space if at the end of the cmd string
+    # a trailing space if at the end of the cmd string, unless the command has
+    # maxsplit < len(before) (such as :open in these tests)
+    if after_txt.startswith(':open'):
+        return
+
     after_pos += 1
     if after_pos > len(after_txt):
         after_txt += ' '
@@ -299,6 +343,30 @@ def test_quickcomplete_flicker(status_command_stub, completer_obj,
     config_stub.val.completion.quick = True
 
     _set_cmd_prompt(status_command_stub, ':open |')
+    completer_obj.schedule_completion_update()
+    assert completion_widget_stub.set_model.called
+    completion_widget_stub.set_model.reset_mock()
+
+    # selecting a completion should not re-set the model
     completer_obj.on_selection_changed('http://example.com')
     completer_obj.schedule_completion_update()
     assert not completion_widget_stub.set_model.called
+
+
+def test_min_chars(status_command_stub, completer_obj, completion_widget_stub,
+                   config_stub, key_config_stub):
+    """Test that an update is delayed until min_chars characters are input."""
+    config_stub.val.completion.min_chars = 3
+
+    # Test #3635, where min_chars could crash the first update
+    _set_cmd_prompt(status_command_stub, ':set c|')
+    completer_obj.schedule_completion_update()
+    assert not completion_widget_stub.set_model.called
+
+    _set_cmd_prompt(status_command_stub, ':set co|')
+    completer_obj.schedule_completion_update()
+    assert not completion_widget_stub.set_model.called
+
+    _set_cmd_prompt(status_command_stub, ':set com|')
+    completer_obj.schedule_completion_update()
+    assert completion_widget_stub.set_model.call_count == 1

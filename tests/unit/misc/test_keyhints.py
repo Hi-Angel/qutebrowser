@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -90,6 +90,32 @@ def test_suggestions(keyhint, config_stub):
         ('a', 'yellow', 'ba', 'message-info cmd-aba'),
         ('a', 'yellow', 'bb', 'message-info cmd-abb'),
         ('a', 'yellow', 'c', 'message-info cmd-ac'))
+
+
+def test_suggestions_special(keyhint, config_stub):
+    """Test that special characters work properly as prefix."""
+    bindings = {'normal': {
+        '<Ctrl-C>a': 'message-info cmd-Cca',
+        '<Ctrl-C><Ctrl-C>': 'message-info cmd-CcCc',
+        '<Ctrl-C><Ctrl-X>': 'message-info cmd-CcCx',
+        'cbb': 'message-info cmd-cbb',
+        'xd': 'message-info cmd-xd',
+        'xe': 'message-info cmd-xe',
+    }}
+    default_bindings = {'normal': {
+        '<Ctrl-C>c': 'message-info cmd-Ccc',
+    }}
+    config_stub.val.bindings.default = default_bindings
+    config_stub.val.bindings.commands = bindings
+
+    keyhint.update_keyhint('normal', '<Ctrl+c>')
+    assert keyhint.text() == expected_text(
+        ('&lt;Ctrl+c&gt;', 'yellow', 'a', 'message-info cmd-Cca'),
+        ('&lt;Ctrl+c&gt;', 'yellow', 'c', 'message-info cmd-Ccc'),
+        ('&lt;Ctrl+c&gt;', 'yellow', '&lt;Ctrl+c&gt;',
+         'message-info cmd-CcCc'),
+        ('&lt;Ctrl+c&gt;', 'yellow', '&lt;Ctrl+x&gt;',
+         'message-info cmd-CcCx'))
 
 
 def test_suggestions_with_count(keyhint, config_stub, monkeypatch, stubs):

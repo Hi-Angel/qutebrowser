@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -35,18 +35,19 @@ import types
 import attr
 import pytest
 import py.path  # pylint: disable=no-name-in-module
+from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout
+from PyQt5.QtNetwork import QNetworkCookieJar
 
 import helpers.stubs as stubsmod
-from qutebrowser.config import config, configdata, configtypes, configexc
-from qutebrowser.utils import objreg, standarddir
+import helpers.utils
+from qutebrowser.config import (config, configdata, configtypes, configexc,
+                                configfiles)
+from qutebrowser.utils import objreg, standarddir, utils
+from qutebrowser.browser import greasemonkey
 from qutebrowser.browser.webkit import cookies
 from qutebrowser.misc import savemanager, sql
 from qutebrowser.keyinput import modeman
-
-from PyQt5.QtCore import pyqtSignal, QEvent, QSize, Qt, QObject
-from PyQt5.QtGui import QKeyEvent
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout
-from PyQt5.QtNetwork import QNetworkCookieJar
 
 
 class WinRegistryHelper:
@@ -59,6 +60,9 @@ class WinRegistryHelper:
         """A fake window object for the registry."""
 
         registry = attr.ib()
+
+        def windowTitle(self):
+            return 'window title - qutebrowser'
 
     def __init__(self):
         self._ids = []
@@ -75,34 +79,9 @@ class WinRegistryHelper:
             del objreg.window_registry[win_id]
 
 
-class CallbackChecker(QObject):
-
-    """Check if a value provided by a callback is the expected one."""
-
-    got_result = pyqtSignal(object)
-    UNSET = object()
-
-    def __init__(self, qtbot, parent=None):
-        super().__init__(parent)
-        self._qtbot = qtbot
-        self._result = self.UNSET
-
-    def callback(self, result):
-        """Callback which can be passed to runJavaScript."""
-        self._result = result
-        self.got_result.emit(result)
-
-    def check(self, expected):
-        """Wait until the JS result arrived and compare it."""
-        if self._result is self.UNSET:
-            with self._qtbot.waitSignal(self.got_result, timeout=2000):
-                pass
-        assert self._result == expected
-
-
 @pytest.fixture
 def callback_checker(qtbot):
-    return CallbackChecker(qtbot)
+    return helpers.utils.CallbackChecker(qtbot)
 
 
 class FakeStatusBar(QWidget):
@@ -134,6 +113,7 @@ def fake_statusbar(qtbot):
     # pylint: disable=attribute-defined-outside-init
     statusbar.container = container
     vbox.addWidget(statusbar)
+    # pylint: enable=attribute-defined-outside-init
 
     with qtbot.waitExposed(container):
         container.show()
@@ -162,6 +142,47 @@ def tab_registry(win_registry):
 def fake_web_tab(stubs, tab_registry, mode_manager, qapp):
     """Fixture providing the FakeWebTab *class*."""
     return stubs.FakeWebTab
+
+
+@pytest.fixture
+def greasemonkey_manager(data_tmpdir):
+    gm_manager = greasemonkey.GreasemonkeyManager()
+    objreg.register('greasemonkey', gm_manager)
+    yield
+    objreg.delete('greasemonkey')
+
+
+@pytest.fixture
+def webkit_tab(qtbot, tab_registry, cookiejar_and_cache, mode_manager,
+               session_manager_stub, greasemonkey_manager, fake_args):
+    webkittab = pytest.importorskip('qutebrowser.browser.webkit.webkittab')
+    tab = webkittab.WebKitTab(win_id=0, mode_manager=mode_manager,
+                              private=False)
+    qtbot.add_widget(tab)
+    return tab
+
+
+@pytest.fixture
+def webengine_tab(qtbot, tab_registry, fake_args, mode_manager,
+                  session_manager_stub, greasemonkey_manager,
+                  redirect_webengine_data):
+    webenginetab = pytest.importorskip(
+        'qutebrowser.browser.webengine.webenginetab')
+    tab = webenginetab.WebEngineTab(win_id=0, mode_manager=mode_manager,
+                                    private=False)
+    qtbot.add_widget(tab)
+    return tab
+
+
+@pytest.fixture(params=['webkit', 'webengine'])
+def web_tab(request):
+    """A WebKitTab/WebEngineTab."""
+    if request.param == 'webkit':
+        return request.getfixturevalue('webkit_tab')
+    elif request.param == 'webengine':
+        return request.getfixturevalue('webengine_tab')
+    else:
+        raise utils.Unreachable
 
 
 def _generate_cmdline_tests():
@@ -214,11 +235,15 @@ def configdata_init():
 
 
 @pytest.fixture
-def config_stub(stubs, monkeypatch, configdata_init):
-    """Fixture which provides a fake config object."""
-    yaml_config = stubs.FakeYamlConfig()
+def yaml_config_stub(config_tmpdir):
+    """Fixture which provides a YamlConfig object."""
+    return configfiles.YamlConfig()
 
-    conf = config.Config(yaml_config=yaml_config)
+
+@pytest.fixture
+def config_stub(stubs, monkeypatch, configdata_init, yaml_config_stub):
+    """Fixture which provides a fake config object."""
+    conf = config.Config(yaml_config=yaml_config_stub)
     monkeypatch.setattr(config, 'instance', conf)
 
     container = config.ConfigContainer(conf)
@@ -335,10 +360,12 @@ def qnam(qapp):
 
 
 @pytest.fixture
-def webengineview():
+def webengineview(qtbot):
     """Get a QWebEngineView if QtWebEngine is available."""
     QtWebEngineWidgets = pytest.importorskip('PyQt5.QtWebEngineWidgets')
-    return QtWebEngineWidgets.QWebEngineView()
+    view = QtWebEngineWidgets.QWebEngineView()
+    qtbot.add_widget(view)
+    return view
 
 
 @pytest.fixture
@@ -370,21 +397,6 @@ def webview(qtbot, webpage):
 def webframe(webpage):
     """Convenience fixture to get a mainFrame of a QWebPage."""
     return webpage.mainFrame()
-
-
-@pytest.fixture
-def fake_keyevent_factory():
-    """Fixture that when called will return a mock instance of a QKeyEvent."""
-    def fake_keyevent(key, modifiers=0, text='', typ=QEvent.KeyPress):
-        """Generate a new fake QKeyPressEvent."""
-        evtmock = unittest.mock.create_autospec(QKeyEvent, instance=True)
-        evtmock.key.return_value = key
-        evtmock.modifiers.return_value = modifiers
-        evtmock.text.return_value = text
-        evtmock.type.return_value = typ
-        return evtmock
-
-    return fake_keyevent
 
 
 @pytest.fixture
@@ -477,6 +489,18 @@ def runtime_tmpdir(monkeypatch, tmpdir):
 
 
 @pytest.fixture
+def cache_tmpdir(monkeypatch, tmpdir):
+    """Set tmpdir/cache as the cachedir.
+
+    Use this to avoid creating a 'real' cache dir (~/.cache/qute_test).
+    """
+    cachedir = tmpdir / 'cache'
+    cachedir.ensure(dir=True)
+    monkeypatch.setattr(standarddir, 'cache', lambda: str(cachedir))
+    return cachedir
+
+
+@pytest.fixture
 def redirect_webengine_data(data_tmpdir, monkeypatch):
     """Set XDG_DATA_HOME and HOME to a temp location.
 
@@ -529,3 +553,12 @@ class ModelValidator:
 @pytest.fixture
 def model_validator(qtmodeltester):
     return ModelValidator(qtmodeltester)
+
+
+@pytest.fixture
+def download_stub(win_registry, tmpdir, stubs):
+    """Register a FakeDownloadManager."""
+    stub = stubs.FakeDownloadManager(tmpdir)
+    objreg.register('qtnetwork-download-manager', stub)
+    yield stub
+    objreg.delete('qtnetwork-download-manager')

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -21,12 +21,10 @@
 
 import pytest
 
-# FIXME:qtwebengine Make these tests use the tab API
-pytest.importorskip('PyQt5.QtWebKit')
+import helpers.utils
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWebKit import QWebSettings
-from PyQt5.QtWebKitWidgets import QWebPage
+QWebSettings = pytest.importorskip("PyQt5.QtWebKit").QWebSettings
+QWebPage = pytest.importorskip("PyQt5.QtWebKitWidgets").QWebPage
 
 
 @pytest.fixture(autouse=True)
@@ -53,24 +51,26 @@ class CaretTester:
     def check(self):
         """Check whether the caret is before the MARKER text."""
         self.js.run_file('position_caret.js')
-        self.js.webview.triggerPageAction(QWebPage.SelectNextWord)
-        assert self.js.webview.selectedText().rstrip() == "MARKER"
+        self.js.tab.caret.toggle_selection()
+        self.js.tab.caret.move_to_next_word()
+
+        callback_checker = helpers.utils.CallbackChecker(self.js.qtbot)
+        self.js.tab.caret.selection(lambda text:
+                                    callback_checker.callback(text.rstrip()))
+        callback_checker.check('MARKER')
 
     def check_scrolled(self):
         """Check if the page is scrolled down."""
-        frame = self.js.webview.page().mainFrame()
-        minimum = frame.scrollBarMinimum(Qt.Vertical)
-        value = frame.scrollBarValue(Qt.Vertical)
-        assert value > minimum
+        assert not self.js.tab.scroller.at_top()
 
 
 @pytest.fixture
-def caret_tester(js_tester):
+def caret_tester(js_tester_webkit):
     """Helper fixture to test caret browsing positions."""
-    caret_tester = CaretTester(js_tester)
+    caret_tester = CaretTester(js_tester_webkit)
     # Showing webview here is necessary for test_scrolled_down_img to
     # succeed in some cases, see #1988
-    caret_tester.js.webview.show()
+    caret_tester.js.tab.show()
     return caret_tester
 
 
@@ -82,10 +82,11 @@ def test_simple(caret_tester):
 
 
 @pytest.mark.integration
+@pytest.mark.no_xvfb
 def test_scrolled_down(caret_tester):
     """Test with multiple text blocks with the viewport scrolled down."""
     caret_tester.js.load('position_caret/scrolled_down.html')
-    caret_tester.js.scroll_anchor('anchor')
+    caret_tester.js.tab.scroller.to_anchor('anchor')
     caret_tester.check_scrolled()
     caret_tester.check()
 
@@ -99,9 +100,10 @@ def test_invisible(caret_tester, style):
 
 
 @pytest.mark.integration
+@pytest.mark.no_xvfb
 def test_scrolled_down_img(caret_tester):
     """Test with an image at the top with the viewport scrolled down."""
     caret_tester.js.load('position_caret/scrolled_down_img.html')
-    caret_tester.js.scroll_anchor('anchor')
+    caret_tester.js.tab.scroller.to_anchor('anchor')
     caret_tester.check_scrolled()
     caret_tester.check()

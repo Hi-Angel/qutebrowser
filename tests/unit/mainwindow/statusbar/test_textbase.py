@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -63,7 +63,7 @@ def test_settext_empty(mocker, qtbot):
                  autospec=True)
 
     label.setText('')
-    label.repaint.assert_called_with()
+    label.repaint.assert_called_with()  # pylint: disable=no-member
 
 
 def test_resize(qtbot):
@@ -92,7 +92,7 @@ def test_text_elide_none(mocker, qtbot):
                  'fontMetrics')
     label._update_elided_text(20)
 
-    assert not label.fontMetrics.called
+    assert not label.fontMetrics.called  # pylint: disable=no-member
 
 
 def test_unset_text(qtbot):

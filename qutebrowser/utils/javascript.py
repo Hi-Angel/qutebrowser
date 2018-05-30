@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -18,6 +18,9 @@
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
 """Utilities related to javascript interaction."""
+
+
+from qutebrowser.utils import jinja
 
 
 def string_escape(text):
@@ -70,3 +73,9 @@ def assemble(module, function, *args):
         parts = ['window', '_qutebrowser', module, function]
     code = '"use strict";\n{}({});'.format('.'.join(parts), js_args)
     return code
+
+
+def wrap_global(name, *sources):
+    """Wrap a script using window._qutebrowser."""
+    template = jinja.js_environment.get_template('global_wrapper.js')
+    return template.render(code='\n'.join(sources), name=name)

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2017-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -25,6 +25,7 @@ import functools
 import html
 import ctypes
 import ctypes.util
+import enum
 
 import attr
 from PyQt5.QtCore import Qt
@@ -37,10 +38,10 @@ from qutebrowser.utils import usertypes, objreg, version, qtutils, log, utils
 from qutebrowser.misc import objects, msgbox
 
 
-_Result = usertypes.enum(
+_Result = enum.IntEnum(
     '_Result',
     ['quit', 'restart', 'restart_webkit', 'restart_webengine'],
-    is_int=True, start=QDialog.Accepted + 1)
+    start=QDialog.Accepted + 1)
 
 
 @attr.s
@@ -151,7 +152,7 @@ def _show_dialog(*args, **kwargs):
     elif status == _Result.restart:
         quitter.restart()
     else:
-        assert False, status
+        raise utils.Unreachable(status)
 
     sys.exit(usertypes.Exit.err_init)
 
@@ -165,8 +166,9 @@ def _nvidia_shader_workaround():
     See https://bugs.launchpad.net/ubuntu/+source/python-qt4/+bug/941826
     """
     assert objects.backend == usertypes.Backend.QtWebEngine, objects.backend
-    if utils.is_linux:
-        ctypes.CDLL(ctypes.util.find_library("GL"), mode=ctypes.RTLD_GLOBAL)
+    libgl = ctypes.util.find_library("GL")
+    if libgl is not None:
+        ctypes.CDLL(libgl, mode=ctypes.RTLD_GLOBAL)
 
 
 def _handle_nouveau_graphics():
@@ -190,7 +192,7 @@ def _handle_nouveau_graphics():
         text="<p>There are two ways to fix this:</p>"
              "<p><b>Forcing software rendering</b></p>"
              "<p>This allows you to use the newer QtWebEngine backend (based "
-             "on Chromium) but could have noticable performance impact "
+             "on Chromium) but could have noticeable performance impact "
              "(depending on your hardware). "
              "This sets the <i>qt.force_software_rendering = True</i> option "
              "(if you have a <i>config.py</i> file, you'll need to set this "
@@ -198,8 +200,7 @@ def _handle_nouveau_graphics():
         buttons=[button],
     )
 
-    # Should never be reached
-    assert False
+    raise utils.Unreachable
 
 
 def _handle_wayland():
@@ -238,8 +239,7 @@ def _handle_wayland():
                  "(based on Chromium). "
         )
 
-    # Should never be reached
-    assert False
+    raise utils.Unreachable
 
 
 @attr.s
@@ -358,11 +358,11 @@ def _check_backend_modules():
                 html.escape(imports.webengine_error))
         )
 
-    # Should never be reached
-    assert False
+    raise utils.Unreachable
 
 
 def init():
+    """Check for various issues related to QtWebKit/QtWebEngine."""
     _check_backend_modules()
     if objects.backend == usertypes.Backend.QtWebEngine:
         _handle_ssl_support()

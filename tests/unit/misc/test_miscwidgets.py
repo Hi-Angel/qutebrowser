@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -106,7 +106,7 @@ class TestFullscreenNotification:
 
     @pytest.mark.parametrize('bindings, text', [
         ({'<escape>': 'fullscreen --leave'},
-            "Press Escape to exit fullscreen."),
+         "Press <Escape> to exit fullscreen."),
         ({'<escape>': 'fullscreen'}, "Page is now fullscreen."),
         ({'a': 'fullscreen --leave'}, "Press a to exit fullscreen."),
         ({}, "Page is now fullscreen."),

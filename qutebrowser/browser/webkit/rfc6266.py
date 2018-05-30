@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -270,6 +270,7 @@ class _ContentDisposition:
         elif 'filename' in self.assocs:
             # XXX Reject non-ascii (parsed via qdtext) here?
             return self.assocs['filename']
+        return None
 
     def is_inline(self):
         """Return if the file should be handled inline.

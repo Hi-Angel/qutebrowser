@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2017 Imran Sobir
+# Copyright 2017-2018 Imran Sobir
 #
 # This file is part of qutebrowser.
 #
@@ -118,7 +118,7 @@ class TestHistoryHandler:
         (72*60*60, 0)
     ])
     def test_qutehistory_data(self, start_time_offset, expected_item_count,
-            now):
+                              now):
         """Ensure qute://history/data returns correct items."""
         start_time = now - start_time_offset
         url = QUrl("qute://history/data?start_time=" + str(start_time))
@@ -146,3 +146,26 @@ class TestHistoryHandler:
         url = QUrl("qute://history/data?start_time={}".format(now))
         _mimetype, data = benchmark(qutescheme.qute_history, url)
         assert len(json.loads(data)) > 1
+
+
+class TestHelpHandler:
+
+    """Tests for qute://help."""
+
+    @pytest.fixture
+    def data_patcher(self, monkeypatch):
+        def _patch(path, data):
+            def _read_file(name, binary=False):
+                assert path == name
+                if binary:
+                    return data
+                return data.decode('utf-8')
+
+            monkeypatch.setattr(qutescheme.utils, 'read_file', _read_file)
+        return _patch
+
+    def test_unknown_file_type(self, data_patcher):
+        data_patcher('html/doc/foo.bin', b'\xff')
+        mimetype, data = qutescheme.qute_help(QUrl('qute://help/foo.bin'))
+        assert mimetype == 'application/octet-stream'
+        assert data == b'\xff'

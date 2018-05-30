@@ -55,6 +55,30 @@ Feature: Special qute:// pages
         And I hint with args "links normal" and follow a
         Then qute://help/quickstart.html should be loaded
 
+    Scenario: Opening a link with qute://help
+        When the documentation is up to date
+        And I run :tab-only
+        And I open qute://help without waiting
+        And I wait until qute://help/ is loaded
+        And I hint with args "links normal" and follow a
+        Then qute://help/quickstart.html should be loaded
+
+    Scenario: Opening a link with qute://help/index.html/..
+        When the documentation is up to date
+        And I open qute://help/index.html/.. without waiting
+        Then qute://help/ should be loaded
+
+    Scenario: Opening a link with qute://help/index.html/../
+        When the documentation is up to date
+        And I open qute://help/index.html/../ without waiting
+        Then qute://help/ should be loaded
+
+    Scenario: Opening a link with qute://help/img/
+        When the documentation is up to date
+        And I open qute://help/img/ without waiting
+        Then "*Error while * qute://*" should be logged
+        And "* url='qute://help/img'* LoadStatus.error" should be logged
+
     # :history
 
     Scenario: :history without arguments
@@ -74,27 +98,31 @@ Feature: Special qute:// pages
 
     # qute://settings
 
+    # Sometimes, an unrelated value gets set
+    @flaky
     Scenario: Focusing input fields in qute://settings and entering valid value
-        When I set ignore_case to never
+        When I set search.ignore_case to never
         And I open qute://settings
         # scroll to the right - the table does not fit in the default screen
         And I run :scroll-to-perc -x 100
-        And I run :jseval document.getElementById('input-ignore_case').value = ''
-        And I run :click-element id input-ignore_case
+        And I run :jseval document.getElementById('input-search.ignore_case').value = ''
+        And I run :click-element id input-search.ignore_case
         And I wait for "Entering mode KeyMode.insert *" in the log
         And I press the keys "always"
         And I press the key "<Escape>"
         # an explicit Tab to unfocus the input field seems to stabilize the tests
         And I press the key "<Tab>"
-        And I wait for "Config option changed: ignore_case *" in the log
-        Then the option ignore_case should be set to always
+        And I wait for "Config option changed: search.ignore_case *" in the log
+        Then the option search.ignore_case should be set to always
 
+    # Sometimes, an unrelated value gets set
+    @flaky
     Scenario: Focusing input fields in qute://settings and entering invalid value
         When I open qute://settings
         # scroll to the right - the table does not fit in the default screen
         And I run :scroll-to-perc -x 100
-        And I run :jseval document.getElementById('input-ignore_case').value = ''
-        And I run :click-element id input-ignore_case
+        And I run :jseval document.getElementById('input-search.ignore_case').value = ''
+        And I run :click-element id input-search.ignore_case
         And I wait for "Entering mode KeyMode.insert *" in the log
         And I press the keys "foo"
         And I press the key "<Escape>"
@@ -139,13 +167,22 @@ Feature: Special qute:// pages
 
     Scenario: Running :pyeval
         When I run :debug-pyeval 1+1
-        And I wait until qute://pyeval is loaded
+        And I wait until qute://pyeval/ is loaded
         Then the page should contain the plaintext "2"
 
     Scenario: Causing exception in :pyeval
         When I run :debug-pyeval 1/0
-        And I wait until qute://pyeval is loaded
+        And I wait until qute://pyeval/ is loaded
         Then the page should contain the plaintext "ZeroDivisionError"
+
+    Scenario: Running :pyveal with --file using a file that exists as python code
+        When I run :debug-pyeval --file (testdata)/misc/pyeval_file.py
+        Then the message "Hello World" should be shown
+        And "pyeval output: No error" should be logged
+
+    Scenario: Running :pyeval --file using a non existing file
+        When I run :debug-pyeval --file nonexistentfile
+        Then the error "[Errno 2] No such file or directory: 'nonexistentfile'" should be shown
 
     Scenario: Running :pyeval with --quiet
         When I run :debug-pyeval --quiet 1+1
@@ -158,7 +195,7 @@ Feature: Special qute:// pages
         And I run :message-warning the-warning-message
         And I run :message-info the-info-message
         And I run :messages
-        Then qute://log?level=info should be loaded
+        Then qute://log/?level=info should be loaded
         And the error "the-error-message" should be shown
         And the warning "the-warning-message" should be shown
         And the page should contain the plaintext "the-error-message"
@@ -170,7 +207,7 @@ Feature: Special qute:// pages
         And I run :message-warning the-warning-message
         And I run :message-info the-info-message
         And I run :messages warning
-        Then qute://log?level=warning should be loaded
+        Then qute://log/?level=warning should be loaded
         And the error "the-error-message" should be shown
         And the warning "the-warning-message" should be shown
         And the page should contain the plaintext "the-error-message"
@@ -182,7 +219,7 @@ Feature: Special qute:// pages
         And I run :message-warning the-warning-message
         And I run :message-info the-info-message
         And I run :messages info
-        Then qute://log?level=info should be loaded
+        Then qute://log/?level=info should be loaded
         And the error "the-error-message" should be shown
         And the warning "the-warning-message" should be shown
         And the page should contain the plaintext "the-error-message"
@@ -209,3 +246,9 @@ Feature: Special qute:// pages
     Scenario: Open qute://version
         When I open qute://version
         Then the page should contain the plaintext "Version info"
+
+    # qute://gpl
+
+    Scenario: Open qute://gpl
+        When I open qute://gpl
+        Then the page should contain the plaintext "GNU GENERAL PUBLIC LICENSE"

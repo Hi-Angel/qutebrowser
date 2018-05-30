@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -65,15 +65,26 @@ class SqliteError(SqlError):
         log.sql.debug("error code: {}".format(error.nativeErrorCode()))
 
         # https://sqlite.org/rescode.html
+        # https://github.com/qutebrowser/qutebrowser/issues/2930
+        # https://github.com/qutebrowser/qutebrowser/issues/3004
         environmental_errors = [
-            # SQLITE_LOCKED,
-            # https://github.com/qutebrowser/qutebrowser/issues/2930
-            '9',
-            # SQLITE_FULL,
-            # https://github.com/qutebrowser/qutebrowser/issues/3004
-            '13',
+            '5',   # SQLITE_BUSY ("database is locked")
+            '8',   # SQLITE_READONLY
+            '11',  # SQLITE_CORRUPT
+            '13',  # SQLITE_FULL
         ]
-        self.environmental = error.nativeErrorCode() in environmental_errors
+        # At least in init(), we can get errors like this:
+        # type: ConnectionError
+        # database text: out of memory
+        # driver text: Error opening database
+        # error code: -1
+        environmental_strings = [
+            "out of memory",
+        ]
+        errcode = error.nativeErrorCode()
+        self.environmental = (
+            errcode in environmental_errors or
+            (errcode == -1 and error.databaseText() in environmental_strings))
 
     def text(self):
         return self.error.databaseText()
@@ -103,6 +114,11 @@ def init(db_path):
         error = database.lastError()
         raise SqliteError("Failed to open sqlite database at {}: {}"
                           .format(db_path, error.text()), error)
+
+    # Enable write-ahead-logging and reduce disk write frequency
+    # see https://sqlite.org/pragma.html and issues #2930 and #3507
+    Query("PRAGMA journal_mode=WAL").run()
+    Query("PRAGMA synchronous=NORMAL").run()
 
 
 def close():

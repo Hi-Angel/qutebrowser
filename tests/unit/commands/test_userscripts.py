@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -64,6 +64,7 @@ def runner(request, runtime_tmpdir):
     if (not utils.is_posix and
             request.param is userscripts._POSIXUserscriptRunner):
         pytest.skip("Requires a POSIX os")
+        raise utils.Unreachable
     else:
         return request.param()
 
@@ -96,10 +97,11 @@ def test_custom_env(qtbot, monkeypatch, py_proc, runner):
             f.write('\n')
     """)
 
-    with qtbot.waitSignal(runner.got_cmd, timeout=10000) as blocker:
-        runner.prepare_run(cmd, *args, env=env)
-        runner.store_html('')
-        runner.store_text('')
+    with qtbot.waitSignal(runner.finished, timeout=10000):
+        with qtbot.waitSignal(runner.got_cmd, timeout=10000) as blocker:
+            runner.prepare_run(cmd, *args, env=env)
+            runner.store_html('')
+            runner.store_text('')
 
     data = blocker.args[0]
     ret_env = json.loads(data)
@@ -241,9 +243,8 @@ def test_unicode_error(caplog, qtbot, py_proc, runner):
             runner.store_html('')
 
     assert len(caplog.records) == 1
-    expected = ("Invalid unicode in userscript output: 'utf-8' codec can't "
-                "decode byte 0x80 in position 0: invalid start byte")
-    assert caplog.records[0].message == expected
+    expected = "Invalid unicode in userscript output: "
+    assert caplog.records[0].message.startswith(expected)
 
 
 @pytest.mark.fake_os('unknown')

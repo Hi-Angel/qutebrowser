@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -87,7 +87,8 @@ def info(message, *, replace=False):
     global_bridge.show(usertypes.MessageLevel.info, message, replace)
 
 
-def _build_question(title, text=None, *, mode, default=None, abort_on=()):
+def _build_question(title, text=None, *, mode, default=None, abort_on=(),
+                    url=None):
     """Common function for ask/ask_async."""
     if not isinstance(mode, usertypes.PromptMode):
         raise TypeError("Mode {} is no PromptMode member!".format(mode))
@@ -96,6 +97,7 @@ def _build_question(title, text=None, *, mode, default=None, abort_on=()):
     question.text = text
     question.mode = mode
     question.default = default
+    question.url = url
     for sig in abort_on:
         sig.connect(question.abort)
     return question
@@ -137,8 +139,8 @@ def ask_async(title, mode, handler, **kwargs):
     global_bridge.ask(question, blocking=False)
 
 
-def confirm_async(yes_action, no_action=None, cancel_action=None,
-                  *args, **kwargs):
+def confirm_async(*, yes_action, no_action=None, cancel_action=None,
+                  **kwargs):
     """Ask a yes/no question to the user and execute the given actions.
 
     Args:
@@ -154,7 +156,7 @@ def confirm_async(yes_action, no_action=None, cancel_action=None,
         The question object.
     """
     kwargs['mode'] = usertypes.PromptMode.yesno
-    question = _build_question(*args, **kwargs)  # pylint: disable=missing-kwoa
+    question = _build_question(**kwargs)  # pylint: disable=missing-kwoa
     question.answered_yes.connect(yes_action)
     if no_action is not None:
         question.answered_no.connect(no_action)
@@ -216,6 +218,7 @@ class GlobalMessageBridge(QObject):
         self.ask_question.emit(question, blocking)
 
     def show(self, level, text, replace=False):
+        """Show the given message."""
         if self._connected:
             self.show_message.emit(level, text, replace)
         else:

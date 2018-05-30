@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -22,33 +22,37 @@
 from qutebrowser.config import configdata, configexc
 from qutebrowser.completion.models import completionmodel, listcategory, util
 from qutebrowser.commands import runners, cmdexc
+from qutebrowser.keyinput import keyutils
 
 
 def option(*, info):
     """A CompletionModel filled with settings and their descriptions."""
     model = completionmodel.CompletionModel(column_widths=(20, 70, 10))
     options = ((opt.name, opt.description, info.config.get_str(opt.name))
-               for opt in configdata.DATA.values())
-    model.add_category(listcategory.ListCategory("Options", sorted(options)))
+               for opt in configdata.DATA.values()
+               if not opt.no_autoconfig)
+    model.add_category(listcategory.ListCategory("Options", options))
     return model
 
 
 def customized_option(*, info):
     """A CompletionModel filled with set settings and their descriptions."""
     model = completionmodel.CompletionModel(column_widths=(20, 70, 10))
-    options = ((opt.name, opt.description, info.config.get_str(opt.name))
-               for opt, _value in info.config)
+    options = ((values.opt.name, values.opt.description,
+                info.config.get_str(values.opt.name))
+               for values in info.config
+               if values)
     model.add_category(listcategory.ListCategory("Customized options",
-                                                 sorted(options)))
+                                                 options))
     return model
 
 
-def value(optname, *_values, info):
+def value(optname, *values, info):
     """A CompletionModel filled with setting values.
 
     Args:
         optname: The name of the config option this model shows.
-        _values: The values already provided on the command line.
+        values: The values already provided on the command line.
         info: A CompletionInfo instance.
     """
     model = completionmodel.CompletionModel(column_widths=(30, 70, 0))
@@ -60,15 +64,48 @@ def value(optname, *_values, info):
 
     opt = info.config.get_opt(optname)
     default = opt.typ.to_str(opt.default)
-    cur_cat = listcategory.ListCategory("Current/Default",
-        [(current, "Current value"), (default, "Default value")])
-    model.add_category(cur_cat)
+    cur_def = []
+    if current not in values:
+        cur_def.append((current, "Current value"))
+    if default not in values:
+        cur_def.append((default, "Default value"))
+    if cur_def:
+        cur_cat = listcategory.ListCategory("Current/Default", cur_def)
+        model.add_category(cur_cat)
 
-    vals = opt.typ.complete()
-    if vals is not None:
-        model.add_category(listcategory.ListCategory("Completions",
-                                                     sorted(vals)))
+    vals = opt.typ.complete() or []
+    vals = [x for x in vals if x[0] not in values]
+    if vals:
+        model.add_category(listcategory.ListCategory("Completions", vals))
     return model
+
+
+def _bind_current_default(key, info):
+    """Get current/default data for the given key."""
+    data = []
+    try:
+        seq = keyutils.KeySequence.parse(key)
+    except keyutils.KeyParseError as e:
+        data.append(('', str(e), key))
+        return data
+
+    cmd_text = info.keyconf.get_command(seq, 'normal')
+    if cmd_text:
+        parser = runners.CommandParser()
+        try:
+            cmd = parser.parse(cmd_text).cmd
+        except cmdexc.NoSuchCommandError:
+            data.append((cmd_text, '(Current) Invalid command!', key))
+        else:
+            data.append((cmd_text, '(Current) {}'.format(cmd.desc), key))
+
+    cmd_text = info.keyconf.get_command(seq, 'normal', default=True)
+    if cmd_text:
+        parser = runners.CommandParser()
+        cmd = parser.parse(cmd_text).cmd
+        data.append((cmd_text, '(Default) {}'.format(cmd.desc), key))
+
+    return data
 
 
 def bind(key, *, info):
@@ -78,17 +115,10 @@ def bind(key, *, info):
         key: the key being bound.
     """
     model = completionmodel.CompletionModel(column_widths=(20, 60, 20))
-    cmd_text = info.keyconf.get_command(key, 'normal')
+    data = _bind_current_default(key, info)
 
-    if cmd_text:
-        parser = runners.CommandParser()
-        try:
-            cmd = parser.parse(cmd_text).cmd
-        except cmdexc.NoSuchCommandError:
-            data = [(cmd_text, 'Invalid command!', key)]
-        else:
-            data = [(cmd_text, cmd.desc, key)]
-        model.add_category(listcategory.ListCategory("Current", data))
+    if data:
+        model.add_category(listcategory.ListCategory("Current/Default", data))
 
     cmdlist = util.get_cmd_completions(info, include_hidden=True,
                                        include_aliases=True)

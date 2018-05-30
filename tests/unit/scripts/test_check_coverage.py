@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 
 # This file is part of qutebrowser.
 #
@@ -50,6 +50,7 @@ class CovtestHelper:
     def run(self):
         """Run pytest with coverage for the given module.py."""
         coveragerc = str(self._testdir.tmpdir / 'coveragerc')
+        self._monkeypatch.delenv('PYTEST_ADDOPTS', raising=False)
         return self._testdir.runpytest('--cov=module',
                                        '--cov-config={}'.format(coveragerc),
                                        '--cov-report=xml',

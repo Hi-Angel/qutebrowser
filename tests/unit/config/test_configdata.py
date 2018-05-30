@@ -1,5 +1,5 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 
 # This file is part of qutebrowser.
 #
@@ -34,7 +34,7 @@ def test_init(config_stub):
     # configdata.init() is called by config_stub
     config_stub.val.aliases = {}
     assert isinstance(configdata.DATA, dict)
-    assert 'ignore_case' in configdata.DATA
+    assert 'search.ignore_case' in configdata.DATA
 
 
 def test_data(config_stub):
@@ -53,8 +53,6 @@ def test_data(config_stub):
             assert isinstance(option.default, list)
 
 
-# https://github.com/qutebrowser/qutebrowser/issues/2777
-@pytest.mark.no_ci
 def test_init_benchmark(benchmark):
     benchmark(configdata.init)
 

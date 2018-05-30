@@ -1,4 +1,4 @@
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
 # This file is part of qutebrowser.
@@ -21,12 +21,11 @@
 import logging
 
 import pytest
+from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import QMessageBox
 
 from qutebrowser.utils import error, utils
 from qutebrowser.misc import ipc
-
-from PyQt5.QtCore import QTimer
-from PyQt5.QtWidgets import QMessageBox
 
 
 class Error(Exception):

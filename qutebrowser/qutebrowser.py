@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 
 # This file is part of qutebrowser.
 #
@@ -61,7 +61,8 @@ def get_argparser():
     """Get the argparse parser."""
     parser = argparse.ArgumentParser(prog='qutebrowser',
                                      description=qutebrowser.__description__)
-    parser.add_argument('--basedir', help="Base directory for all storage.")
+    parser.add_argument('-B', '--basedir', help="Base directory for all "
+                        "storage.")
     parser.add_argument('-V', '--version', help="Show version and quit.",
                         action='store_true')
     parser.add_argument('-s', '--set', help="Set a temporary setting for "
@@ -74,7 +75,8 @@ def get_argparser():
                         "session even if one would be restored.",
                         action='store_true')
     parser.add_argument('--target', choices=['auto', 'tab', 'tab-bg',
-                        'tab-silent', 'tab-bg-silent', 'window'],
+                                             'tab-silent', 'tab-bg-silent',
+                                             'window'],
                         help="How URLs should be opened if there is already a "
                              "qutebrowser instance running.")
     parser.add_argument('--backend', choices=['webkit', 'webengine'],
@@ -101,7 +103,7 @@ def get_argparser():
                        help="How many lines of the debug log to keep in RAM "
                        "(-1: unlimited).",
                        default=2000, type=int)
-    debug.add_argument('--debug', help="Turn on debugging options.",
+    debug.add_argument('-d', '--debug', help="Turn on debugging options.",
                        action='store_true')
     debug.add_argument('--json-logging', action='store_true', help="Output log"
                        " lines in JSON format (one object per line).")
@@ -111,8 +113,8 @@ def get_argparser():
                        action='store_true')
     debug.add_argument('--nowindow', action='store_true', help="Don't show "
                        "the main window.")
-    debug.add_argument('--temp-basedir', action='store_true', help="Use a "
-                       "temporary basedir.")
+    debug.add_argument('-T', '--temp-basedir', action='store_true', help="Use "
+                       "a temporary basedir.")
     debug.add_argument('--no-err-windows', action='store_true', help="Don't "
                        "show any error windows (used for tests/smoke.py).")
     debug.add_argument('--qt-arg', help="Pass an argument with a value to Qt. "
@@ -122,9 +124,9 @@ def get_argparser():
                        action='append')
     debug.add_argument('--qt-flag', help="Pass an argument to Qt as flag.",
                        nargs=1, action='append')
-    debug.add_argument('--debug-flag', type=debug_flag_error, default=[],
-                       help="Pass name of debugging feature to be turned on.",
-                       action='append', dest='debug_flags')
+    debug.add_argument('-D', '--debug-flag', type=debug_flag_error,
+                       default=[], help="Pass name of debugging feature to be"
+                       " turned on.", action='append', dest='debug_flags')
     parser.add_argument('command', nargs='*', help="Commands to execute on "
                         "startup.", metavar=':command')
     # URLs will actually be in command
@@ -158,8 +160,12 @@ def debug_flag_error(flag):
     Available flags:
         debug-exit: Turn on debugging of late exit.
         pdb-postmortem: Drop into pdb on exceptions.
+        no-sql-history: Don't store history items.
+        no-scroll-filtering: Process all scrolling updates.
+        log-requests: Log all network requests.
     """
-    valid_flags = ['debug-exit', 'pdb-postmortem', 'no-sql-history']
+    valid_flags = ['debug-exit', 'pdb-postmortem', 'no-sql-history',
+                   'no-scroll-filtering', 'log-requests']
 
     if flag in valid_flags:
         return flag

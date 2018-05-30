@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -64,6 +64,7 @@ def path_up(url, count):
         raise Error("Can't go up!")
     for _i in range(0, min(count, path.count('/'))):
         path = posixpath.join(path, posixpath.pardir)
+    path = posixpath.normpath(path)
     url.setPath(path)
     return url
 

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -45,7 +45,7 @@ def completionview(qtbot, status_command_stub, config_stub, win_registry,
 def test_set_model(completionview):
     """Ensure set_model actually sets the model and expands all categories."""
     model = completionmodel.CompletionModel()
-    for i in range(3):
+    for _i in range(3):
         model.add_category(listcategory.ListCategory('', [('foo',)]))
     completionview.set_model(model)
     assert completionview.model() is model
@@ -82,9 +82,9 @@ def test_maybe_update_geometry(completionview, config_stub, qtbot):
     ('next', [['Aa'], ['Ba']], ['Aa', 'Ba', 'Aa']),
     ('prev', [['Aa'], ['Ba']], ['Ba', 'Aa', 'Ba']),
     ('next', [['Aa', 'Ab', 'Ac'], ['Ba', 'Bb'], ['Ca']],
-        ['Aa', 'Ab', 'Ac', 'Ba', 'Bb', 'Ca', 'Aa']),
+     ['Aa', 'Ab', 'Ac', 'Ba', 'Bb', 'Ca', 'Aa']),
     ('prev', [['Aa', 'Ab', 'Ac'], ['Ba', 'Bb'], ['Ca']],
-        ['Ca', 'Bb', 'Ba', 'Ac', 'Ab', 'Aa', 'Ca']),
+     ['Ca', 'Bb', 'Ba', 'Ac', 'Ab', 'Aa', 'Ca']),
     ('next', [[], ['Ba', 'Bb']], ['Ba', 'Bb', 'Ba']),
     ('prev', [[], ['Ba', 'Bb']], ['Bb', 'Ba', 'Bb']),
     ('next', [[], [], ['Ca', 'Cb']], ['Ca', 'Cb', 'Ca']),
@@ -102,9 +102,9 @@ def test_maybe_update_geometry(completionview, config_stub, qtbot):
     ('next-category', [['Aa'], ['Ba']], ['Aa', 'Ba', 'Aa']),
     ('prev-category', [['Aa'], ['Ba']], ['Ba', 'Aa', 'Ba']),
     ('next-category', [['Aa', 'Ab', 'Ac'], ['Ba', 'Bb'], ['Ca']],
-        ['Aa', 'Ba', 'Ca', 'Aa']),
+     ['Aa', 'Ba', 'Ca', 'Aa']),
     ('prev-category', [['Aa', 'Ab', 'Ac'], ['Ba', 'Bb'], ['Ca']],
-        ['Ca', 'Ba', 'Aa', 'Ca']),
+     ['Ca', 'Ba', 'Aa', 'Ca']),
     ('next-category', [[], ['Ba', 'Bb']], ['Ba', None, None]),
     ('prev-category', [[], ['Ba', 'Bb']], ['Ba', None, None]),
     ('next-category', [[], [], ['Ca', 'Cb']], ['Ca', None, None]),
@@ -170,8 +170,9 @@ def test_completion_item_focus_fetch(completionview, qtbot):
                   emitted.
     """
     model = completionmodel.CompletionModel()
-    cat = mock.Mock(spec=['layoutChanged', 'layoutAboutToBeChanged',
-        'canFetchMore', 'fetchMore', 'rowCount', 'index', 'data'])
+    cat = mock.Mock(spec=[
+        'layoutChanged', 'layoutAboutToBeChanged', 'canFetchMore',
+        'fetchMore', 'rowCount', 'index', 'data'])
     cat.canFetchMore = lambda *_: True
     cat.rowCount = lambda *_: 2
     cat.fetchMore = mock.Mock()
@@ -243,6 +244,43 @@ def test_completion_item_del_no_selection(completionview):
     with pytest.raises(cmdexc.CommandError, match='No item selected!'):
         completionview.completion_item_del()
     func.assert_not_called()
+
+
+@pytest.mark.parametrize('sel', [True, False])
+def test_completion_item_yank(completionview, mocker, sel):
+    """Test that completion_item_yank invokes delete_cur_item in the model."""
+    m = mocker.patch(
+        'qutebrowser.completion.completionwidget.utils',
+        autospec=True)
+    model = completionmodel.CompletionModel()
+    cat = listcategory.ListCategory('', [('foo', 'bar')])
+    model.add_category(cat)
+
+    completionview.set_model(model)
+    completionview.completion_item_focus('next')
+    completionview.completion_item_yank(sel)
+
+    m.set_clipboard.assert_called_once_with('foo', sel)
+
+
+@pytest.mark.parametrize('sel', [True, False])
+def test_completion_item_yank_selected(completionview, status_command_stub,
+                                       mocker, sel):
+    """Test that completion_item_yank yanks selected text."""
+    m = mocker.patch(
+        'qutebrowser.completion.completionwidget.utils',
+        autospec=True)
+    model = completionmodel.CompletionModel()
+    cat = listcategory.ListCategory('', [('foo', 'bar')])
+    model.add_category(cat)
+
+    completionview.set_model(model)
+    completionview.completion_item_focus('next')
+
+    status_command_stub.selectedText = mock.Mock(return_value='something')
+    completionview.completion_item_yank(sel)
+
+    m.set_clipboard.assert_called_once_with('something', sel)
 
 
 def test_resize_no_model(completionview, qtbot):

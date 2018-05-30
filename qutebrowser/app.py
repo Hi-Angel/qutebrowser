@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -51,7 +51,7 @@ import tokenize
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtGui import QDesktopServices, QPixmap, QIcon, QWindow
 from PyQt5.QtCore import (pyqtSlot, qInstallMessageHandler, QTimer, QUrl,
-                          QObject, QEvent, pyqtSignal)
+                          QObject, QEvent, pyqtSignal, Qt)
 try:
     import hunter
 except ImportError:
@@ -64,7 +64,7 @@ from qutebrowser.completion.models import miscmodels
 from qutebrowser.commands import cmdutils, runners, cmdexc
 from qutebrowser.config import config, websettings, configfiles, configinit
 from qutebrowser.browser import (urlmarks, adblock, history, browsertab,
-                                 downloads)
+                                 qtnetworkdownloads, downloads, greasemonkey)
 from qutebrowser.browser.network import proxy
 from qutebrowser.browser.webkit import cookies, cache
 from qutebrowser.browser.webkit.network import networkmanager
@@ -95,6 +95,7 @@ def run(args):
 
     log.init.debug("Initializing directories...")
     standarddir.init(args)
+    utils.preload_resources()
 
     log.init.debug("Initializing config...")
     configinit.early_init(args)
@@ -339,7 +340,7 @@ def _open_startpage(win_id=None):
     for cur_win_id in list(window_ids):  # Copying as the dict could change
         tabbed_browser = objreg.get('tabbed-browser', scope='window',
                                     window=cur_win_id)
-        if tabbed_browser.count() == 0:
+        if tabbed_browser.widget.count() == 0:
             log.init.debug("Opening start pages")
             for url in config.val.url.start_pages:
                 tabbed_browser.tabopen(url)
@@ -417,7 +418,6 @@ def _init_modules(args, crash_handler):
         args: The argparse namespace.
         crash_handler: The CrashHandler instance.
     """
-    # pylint: disable=too-many-statements
     log.init.debug("Initializing save manager...")
     save_manager = savemanager.SaveManager(qApp)
     objreg.register('save-manager', save_manager)
@@ -492,6 +492,13 @@ def _init_modules(args, crash_handler):
     diskcache = cache.DiskCache(standarddir.cache(), parent=qApp)
     objreg.register('cache', diskcache)
 
+    log.init.debug("Initializing downloads...")
+    download_manager = qtnetworkdownloads.DownloadManager(parent=qApp)
+    objreg.register('qtnetwork-download-manager', download_manager)
+
+    log.init.debug("Initializing Greasemonkey...")
+    greasemonkey.init()
+
     log.init.debug("Misc initialization...")
     macros.init()
     # Init backend-specific stuff
@@ -562,8 +569,8 @@ class Quitter:
             cwd = os.path.abspath(os.path.dirname(sys.executable))
         else:
             args = [sys.executable, '-m', 'qutebrowser']
-            cwd = os.path.join(os.path.abspath(os.path.dirname(
-                               qutebrowser.__file__)), '..')
+            cwd = os.path.join(
+                os.path.abspath(os.path.dirname(qutebrowser.__file__)), '..')
             if not os.path.isdir(cwd):
                 # Probably running from a python egg. Let's fallback to
                 # cwd=None and see if that works out.
@@ -766,6 +773,8 @@ class Quitter:
                         pre_text="Error while saving {}".format(key))
         # Disable storage so removing tempdir will work
         websettings.shutdown()
+        # Disable application proxy factory to fix segfaults with Qt 5.10.1
+        proxy.shutdown()
         # Re-enable faulthandler to stdout, then remove crash log
         log.destroy.debug("Deactivating crash log...")
         objreg.get('crash-handler').destroy_crashlogfile()
@@ -821,6 +830,7 @@ class Application(QApplication):
 
         self.launch_time = datetime.datetime.now()
         self.focusObjectChanged.connect(self.on_focus_object_changed)
+        self.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     @pyqtSlot(QObject)
     def on_focus_object_changed(self, obj):
@@ -833,7 +843,11 @@ class Application(QApplication):
     def event(self, e):
         """Handle macOS FileOpen events."""
         if e.type() == QEvent.FileOpen:
-            open_url(e.url(), no_raise=True)
+            url = e.url()
+            if url.isValid():
+                open_url(url, no_raise=True)
+            else:
+                message.error("Invalid URL: {}".format(url.errorString()))
         else:
             return super().event(e)
 
@@ -869,12 +883,9 @@ class EventFilter(QObject):
         super().__init__(parent)
         self._activated = True
         self._handlers = {
-            QEvent.MouseButtonDblClick: self._handle_mouse_event,
-            QEvent.MouseButtonPress: self._handle_mouse_event,
-            QEvent.MouseButtonRelease: self._handle_mouse_event,
-            QEvent.MouseMove: self._handle_mouse_event,
             QEvent.KeyPress: self._handle_key_event,
             QEvent.KeyRelease: self._handle_key_event,
+            QEvent.ShortcutOverride: self._handle_key_event,
         }
 
     def _handle_key_event(self, event):
@@ -892,23 +903,10 @@ class EventFilter(QObject):
             return False
         try:
             man = objreg.get('mode-manager', scope='window', window='current')
-            return man.eventFilter(event)
+            return man.handle_event(event)
         except objreg.RegistryUnavailableError:
             # No window available yet, or not a MainWindow
             return False
-
-    def _handle_mouse_event(self, _event):
-        """Handle a mouse event.
-
-        Args:
-            _event: The QEvent which is about to be delivered.
-
-        Return:
-            True if the event should be filtered, False if it's passed through.
-        """
-        # Mouse cursor shown (overrideCursor None) -> don't filter event
-        # Mouse cursor hidden (overrideCursor not None) -> filter event
-        return qApp.overrideCursor() is not None
 
     def eventFilter(self, obj, event):
         """Handle an event.

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -171,7 +171,7 @@ def _get_tab_registry(win_id, tab_id):
 
     if tab_id == 'current':
         tabbed_browser = get('tabbed-browser', scope='window', window=win_id)
-        tab = tabbed_browser.currentWidget()
+        tab = tabbed_browser.widget.currentWidget()
         if tab is None:
             raise RegistryUnavailableError('window')
         tab_id = tab.tab_id
@@ -254,7 +254,7 @@ def register(name, obj, update=False, scope=None, registry=None, window=None,
         reg = _get_registry(scope, window, tab)
     if not update and name in reg:
         raise KeyError("Object '{}' is already registered ({})!".format(
-                       name, repr(reg[name])))
+            name, repr(reg[name])))
     reg[name] = obj
 
 

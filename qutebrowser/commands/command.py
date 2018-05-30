@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -58,7 +58,6 @@ class Command:
         name: The main name of the command.
         maxsplit: The maximum amount of splits to do for the commandline, or
                   None.
-        hide: Whether to hide the arguments or not.
         deprecated: False, or a string to describe why a command is deprecated.
         desc: The description of the command.
         handler: The handler function to call.
@@ -69,41 +68,37 @@ class Command:
         backend: Which backend the command works with (or None if it works with
                  both)
         no_replace_variables: Don't replace variables like {url}
+        modes: The modes the command can be executed in.
         _qute_args: The saved data from @cmdutils.argument
-        _modes: The modes the command can be executed in.
         _count: The count set for the command.
         _instance: The object to bind 'self' to.
         _scope: The scope to get _instance for in the object registry.
     """
 
     def __init__(self, *, handler, name, instance=None, maxsplit=None,
-                 hide=False, modes=None, not_modes=None, debug=False,
-                 deprecated=False, no_cmd_split=False,
-                 star_args_optional=False, scope='global', backend=None,
-                 no_replace_variables=False):
-        # I really don't know how to solve this in a better way, I tried.
-        # pylint: disable=too-many-locals
+                 modes=None, not_modes=None, debug=False, deprecated=False,
+                 no_cmd_split=False, star_args_optional=False, scope='global',
+                 backend=None, no_replace_variables=False):
         if modes is not None and not_modes is not None:
             raise ValueError("Only modes or not_modes can be given!")
         if modes is not None:
             for m in modes:
                 if not isinstance(m, usertypes.KeyMode):
                     raise TypeError("Mode {} is no KeyMode member!".format(m))
-            self._modes = set(modes)
+            self.modes = set(modes)
         elif not_modes is not None:
             for m in not_modes:
                 if not isinstance(m, usertypes.KeyMode):
                     raise TypeError("Mode {} is no KeyMode member!".format(m))
-            self._modes = set(usertypes.KeyMode).difference(not_modes)
+            self.modes = set(usertypes.KeyMode).difference(not_modes)
         else:
-            self._modes = set(usertypes.KeyMode)
+            self.modes = set(usertypes.KeyMode)
         if scope != 'global' and instance is None:
             raise ValueError("Setting scope without setting instance makes "
                              "no sense!")
 
         self.name = name
         self.maxsplit = maxsplit
-        self.hide = hide
         self.deprecated = deprecated
         self._instance = instance
         self._scope = scope
@@ -128,6 +123,7 @@ class Command:
         self.pos_args = []
         self.desc = None
         self.flags_with_args = []
+        self._has_vararg = False
 
         # This is checked by future @cmdutils.argument calls so they fail
         # (as they'd be silently ignored otherwise)
@@ -175,6 +171,8 @@ class Command:
 
     def get_pos_arg_info(self, pos):
         """Get an ArgInfo tuple for the given positional parameter."""
+        if pos >= len(self.pos_args) and self._has_vararg:
+            pos = len(self.pos_args) - 1
         name = self.pos_args[pos][0]
         return self._qute_args.get(name, ArgInfo())
 
@@ -195,12 +193,13 @@ class Command:
             return True
         elif arg_info.win_id:
             return True
+        return False
 
     def _inspect_func(self):
-        """Inspect the function to get useful informations from it.
+        """Inspect the function to get useful information from it.
 
         Sets instance attributes (desc, type_conv, name_conv) based on the
-        informations.
+        information.
 
         Return:
             How many user-visible arguments the command has.
@@ -237,6 +236,8 @@ class Command:
             log.commands.vdebug('Adding arg {} of type {} -> {}'.format(
                 param.name, typ, callsig))
             self.parser.add_argument(*args, **kwargs)
+            if param.kind == inspect.Parameter.VAR_POSITIONAL:
+                self._has_vararg = True
         return signature.parameters.values()
 
     def _param_to_argparse_kwargs(self, param, is_bool):
@@ -398,11 +399,12 @@ class Command:
         if isinstance(typ, tuple):
             raise TypeError("{}: Legacy tuple type annotation!".format(
                 self.name))
-        elif type(typ) is type(typing.Union):  # flake8: disable=E721
+        elif getattr(typ, '__origin__', None) is typing.Union or (
+                # Older Python 3.5 patch versions
+                # pylint: disable=no-member,useless-suppression
+                hasattr(typing, 'UnionMeta') and
+                isinstance(typ, typing.UnionMeta)):
             # this is... slightly evil, I know
-            # We also can't use isinstance here because typing.Union doesn't
-            # support that.
-            # pylint: disable=no-member,useless-suppression
             try:
                 types = list(typ.__args__)
             except AttributeError:
@@ -510,8 +512,8 @@ class Command:
         Args:
             mode: The usertypes.KeyMode to check.
         """
-        if mode not in self._modes:
-            mode_names = '/'.join(sorted(m.name for m in self._modes))
+        if mode not in self.modes:
+            mode_names = '/'.join(sorted(m.name for m in self.modes))
             raise cmdexc.PrerequisitesError(
                 "{}: This command is only allowed in {} mode, not {}.".format(
                     self.name, mode_names, mode.name))

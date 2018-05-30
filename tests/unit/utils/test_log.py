@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -25,8 +25,10 @@ import itertools
 import sys
 import warnings
 
+import attr
 import pytest
-import pytest_catchlog
+import _pytest.logging
+from PyQt5 import QtCore
 
 from qutebrowser.utils import log
 from qutebrowser.misc import utilcmds
@@ -63,11 +65,11 @@ def restore_loggers():
     while root_logger.handlers:
         h = root_logger.handlers[0]
         root_logger.removeHandler(h)
-        if not isinstance(h, pytest_catchlog.LogCaptureHandler):
+        if not isinstance(h, _pytest.logging.LogCaptureHandler):
             h.close()
     root_logger.setLevel(original_logging_level)
     for h in root_handlers:
-        if not isinstance(h, pytest_catchlog.LogCaptureHandler):
+        if not isinstance(h, _pytest.logging.LogCaptureHandler):
             # https://github.com/qutebrowser/qutebrowser/issues/856
             root_logger.addHandler(h)
     logging._acquireLock()
@@ -252,3 +254,22 @@ def test_ignore_py_warnings(caplog):
     assert len(caplog.records) == 1
     msg = caplog.records[0].message.splitlines()[0]
     assert msg.endswith("UserWarning: not hidden")
+
+
+class TestQtMessageHandler:
+
+    @attr.s
+    class Context:
+
+        """Fake QMessageLogContext."""
+
+        function = attr.ib(default=None)
+        category = attr.ib(default=None)
+        file = attr.ib(default=None)
+        line = attr.ib(default=None)
+
+    def test_empty_message(self, caplog):
+        """Make sure there's no crash with an empty message."""
+        log.qt_message_handler(QtCore.QtDebugMsg, self.Context(), "")
+        assert len(caplog.records) == 1
+        assert caplog.records[0].msg == "Logged empty message!"

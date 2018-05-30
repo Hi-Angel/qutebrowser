@@ -204,39 +204,53 @@ Feature: Using hints
         Then the javascript message "contents: existingnew" should be logged
 
     ### iframes
-
-    @qtwebengine_todo: Hinting in iframes is not implemented yet
     Scenario: Using :follow-hint inside an iframe
         When I open data/hints/iframe.html
         And I hint with args "links normal" and follow a
-        Then "navigation request: url http://localhost:*/data/hello.txt, type NavigationTypeLinkClicked, *" should be logged
+        Then "navigation request: url http://localhost:*/data/hello.txt, type Type.link_clicked, *" should be logged
 
-    ### FIXME currenly skipped, see https://github.com/qutebrowser/qutebrowser/issues/1525
-    @xfail_norun
+    Scenario: Using :follow-hint inside an iframe button
+        When I open data/hints/iframe_button.html
+        And I hint with args "all normal" and follow s
+        Then "navigation request: url http://localhost:*/data/hello.txt, *" should be logged
+
+    Scenario: Hinting inputs in an iframe without type
+        When I open data/hints/iframe_input.html
+        And I hint with args "inputs" and follow a
+        And I wait for "Entering mode KeyMode.insert (reason: clicking input)" in the log
+        And I run :leave-mode
+        # The actual check is already done above
+        Then no crash should happen
+
+    @flaky  # FIXME https://github.com/qutebrowser/qutebrowser/issues/1525
     Scenario: Using :follow-hint inside a scrolled iframe
         When I open data/hints/iframe_scroll.html
         And I hint with args "all normal" and follow a
         And I run :scroll bottom
-        And I hint wht args "links normal" and follow a
-        Then "navigation request: url http://localhost:*/data/hello2.txt, type NavigationTypeLinkClicked, *" should be logged
+        And I hint with args "links normal" and follow a
+        Then "navigation request: url http://localhost:*/data/hello2.txt, type Type.link_clicked, *" should be logged
 
-    @qtwebengine_skip: Opens in new tab due to Chromium bug
     Scenario: Opening a link inside a specific iframe
         When I open data/hints/iframe_target.html
         And I hint with args "links normal" and follow a
-        Then "navigation request: url http://localhost:*/data/hello.txt, type NavigationTypeLinkClicked, *" should be logged
+        Then "navigation request: url http://localhost:*/data/hello.txt, type Type.link_clicked, *" should be logged
 
     Scenario: Opening a link with specific target frame in a new tab
         When I open data/hints/iframe_target.html
         And I run :tab-only
-        And I hint with args "links tab" and follow a
-        And I wait until data/hello.txt is loaded
+        And I hint with args "links tab" and follow s
+        And I wait until data/hello2.txt is loaded
         Then the following tabs should be open:
             - data/hints/iframe_target.html
-            - data/hello.txt (active)
+            - data/hello2.txt (active)
 
     Scenario: Clicking on iframe with :hint all current
         When I open data/hints/iframe.html
+        And I hint with args "all current" and follow a
+        Then no crash should happen
+
+    Scenario: No error when hinting ranged input in frames
+        When I open data/hints/issue3711_frame.html
         And I hint with args "all current" and follow a
         Then no crash should happen
 
@@ -329,7 +343,7 @@ Feature: Using hints
         And I set hints.auto_follow to unique-match
         And I set hints.auto_follow_timeout to 0
         And I hint with args "all"
-        And I press the keys "ten pos"
+        And I press the keys "ten p"
         Then data/numbers/11.txt should be loaded
 
     Scenario: Scattering is ignored with number hints
@@ -495,3 +509,17 @@ Feature: Using hints
         And I press the key "hello"
         And I press the key "<Enter>"
         Then data/hello.txt should be loaded
+
+    Scenario: Using --first with normal links
+        When I open data/hints/html/simple.html
+        And I hint with args "all --first"
+        Then data/hello.txt should be loaded
+
+    Scenario: Using --first with inputs
+        When I open data/hints/input.html
+        And I hint with args "inputs --first"
+        And I wait for "Entering mode KeyMode.insert (reason: clicking input)" in the log
+        # ensure we clicked the first element
+        And I run :jseval console.log(document.activeElement.id == "qute-input");
+        And I run :leave-mode
+        Then the javascript message "true" should be logged

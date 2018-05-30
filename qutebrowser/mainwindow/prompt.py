@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -171,7 +171,7 @@ class PromptQueue(QObject):
             # just queue it up for later.
             log.prompt.debug("Adding {} to queue.".format(question))
             self._queue.append(question)
-            return
+            return None
 
         if blocking:
             # If we're blocking we save the old question on the stack, so we
@@ -207,6 +207,7 @@ class PromptQueue(QObject):
             return question.answer
         else:
             question.completed.connect(self._pop_later)
+            return None
 
     @pyqtSlot(usertypes.KeyMode)
     def _on_mode_left(self, mode):
@@ -364,7 +365,7 @@ class PromptContainer(QWidget):
             widget.hide()
             widget.deleteLater()
 
-    @cmdutils.register(instance='prompt-container', hide=True, scope='window',
+    @cmdutils.register(instance='prompt-container', scope='window',
                        modes=[usertypes.KeyMode.prompt,
                               usertypes.KeyMode.yesno])
     def prompt_accept(self, value=None):
@@ -388,21 +389,7 @@ class PromptContainer(QWidget):
             message.global_bridge.prompt_done.emit(self._prompt.KEY_MODE)
             question.done()
 
-    @cmdutils.register(instance='prompt-container', hide=True, scope='window',
-                       modes=[usertypes.KeyMode.yesno],
-                       deprecated='Use :prompt-accept yes instead!')
-    def prompt_yes(self):
-        """Answer yes to a yes/no prompt."""
-        self.prompt_accept('yes')
-
-    @cmdutils.register(instance='prompt-container', hide=True, scope='window',
-                       modes=[usertypes.KeyMode.yesno],
-                       deprecated='Use :prompt-accept no instead!')
-    def prompt_no(self):
-        """Answer no to a yes/no prompt."""
-        self.prompt_accept('no')
-
-    @cmdutils.register(instance='prompt-container', hide=True, scope='window',
+    @cmdutils.register(instance='prompt-container', scope='window',
                        modes=[usertypes.KeyMode.prompt], maxsplit=0)
     def prompt_open_download(self, cmdline: str = None):
         """Immediately open a download.
@@ -421,7 +408,7 @@ class PromptContainer(QWidget):
         except UnsupportedOperationError:
             pass
 
-    @cmdutils.register(instance='prompt-container', hide=True, scope='window',
+    @cmdutils.register(instance='prompt-container', scope='window',
                        modes=[usertypes.KeyMode.prompt])
     @cmdutils.argument('which', choices=['next', 'prev'])
     def prompt_item_focus(self, which):
@@ -434,6 +421,27 @@ class PromptContainer(QWidget):
             self._prompt.item_focus(which)
         except UnsupportedOperationError:
             pass
+
+    @cmdutils.register(
+        instance='prompt-container', scope='window',
+        modes=[usertypes.KeyMode.prompt, usertypes.KeyMode.yesno])
+    def prompt_yank(self, sel=False):
+        """Yank URL to clipboard or primary selection.
+
+        Args:
+            sel: Use the primary selection instead of the clipboard.
+        """
+        question = self._prompt.question
+        if question.url is None:
+            message.error('No URL found.')
+            return
+        if sel and utils.supports_selection():
+            target = 'primary selection'
+        else:
+            sel = False
+            target = 'clipboard'
+        utils.set_clipboard(question.url, sel)
+        message.info("Yanked to {}: {}".format(target, question.url))
 
 
 class LineEdit(QLineEdit):
@@ -499,8 +507,8 @@ class _BasePrompt(QWidget):
         self._key_grid = QGridLayout()
         self._key_grid.setVerticalSpacing(0)
 
-        # The bindings are all in the 'prompt' mode, even for yesno prompts
-        all_bindings = config.key_instance.get_reverse_bindings_for('prompt')
+        all_bindings = config.key_instance.get_reverse_bindings_for(
+            self.KEY_MODE.name)
         labels = []
 
         for cmd, text in self._allowed_commands():
@@ -588,6 +596,8 @@ class FilenamePrompt(_BasePrompt):
         if config.val.prompt.filebrowser:
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
+        self._to_complete = ''
+
     @pyqtSlot(str)
     def _set_fileview_root(self, path, *, tabbed=False):
         """Set the root path for the file display."""
@@ -596,6 +606,9 @@ class FilenamePrompt(_BasePrompt):
             separators += os.altsep
 
         dirname = os.path.dirname(path)
+        basename = os.path.basename(path)
+        if not tabbed:
+            self._to_complete = ''
 
         try:
             if not path:
@@ -609,6 +622,7 @@ class FilenamePrompt(_BasePrompt):
             elif os.path.isdir(dirname) and not tabbed:
                 # Input like /foo/ba -> show /foo contents
                 path = dirname
+                self._to_complete = basename
             else:
                 return
         except OSError:
@@ -626,7 +640,11 @@ class FilenamePrompt(_BasePrompt):
             index: The QModelIndex of the selected element.
             clicked: Whether the element was clicked.
         """
-        path = os.path.normpath(self._file_model.filePath(index))
+        if index == QModelIndex():
+            path = os.path.join(self._file_model.rootPath(), self._to_complete)
+        else:
+            path = os.path.normpath(self._file_model.filePath(index))
+
         if clicked:
             path += os.sep
         else:
@@ -688,6 +706,7 @@ class FilenamePrompt(_BasePrompt):
         assert last_index.isValid()
 
         idx = selmodel.currentIndex()
+
         if not idx.isValid():
             # No item selected yet
             idx = last_index if which == 'prev' else first_index
@@ -701,9 +720,23 @@ class FilenamePrompt(_BasePrompt):
         if not idx.isValid():
             idx = last_index if which == 'prev' else first_index
 
+        idx = self._do_completion(idx, which)
+
         selmodel.setCurrentIndex(
             idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
         self._insert_path(idx, clicked=False)
+
+    def _do_completion(self, idx, which):
+        filename = self._file_model.fileName(idx)
+        while not filename.startswith(self._to_complete) and idx.isValid():
+            if which == 'prev':
+                idx = self._file_view.indexAbove(idx)
+            else:
+                assert which == 'next', which
+                idx = self._file_view.indexBelow(idx)
+            filename = self._file_model.fileName(idx)
+
+        return idx
 
     def _allowed_commands(self):
         return [('prompt-accept', 'Accept'), ('leave-mode', 'Abort')]
@@ -734,6 +767,7 @@ class DownloadFilenamePrompt(FilenamePrompt):
             ('prompt-accept', 'Accept'),
             ('leave-mode', 'Abort'),
             ('prompt-open-download', "Open download"),
+            ('prompt-yank', "Yank URL"),
         ]
         return cmds
 
@@ -824,6 +858,7 @@ class YesNoPrompt(_BasePrompt):
         cmds = [
             ('prompt-accept yes', "Yes"),
             ('prompt-accept no', "No"),
+            ('prompt-yank', "Yank URL"),
         ]
 
         if self.question.default is not None:

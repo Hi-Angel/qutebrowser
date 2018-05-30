@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Alexander Cogneau (acogneau) <alexander.cogneau@gmail.com>:
+# Copyright 2015-2018 Alexander Cogneau (acogneau) <alexander.cogneau@gmail.com>:
 #
 # This file is part of qutebrowser.
 #
@@ -67,7 +67,7 @@ def test_get_version_success(qtbot):
         with qtbot.waitSignal(client.success):
             client.get_version('test')
 
-    assert http_stub.url == QUrl('https://pypi.python.org/pypi/test/json')
+    assert http_stub.url == QUrl(client.API_URL.format('test'))
 
 
 def test_get_version_error(qtbot):

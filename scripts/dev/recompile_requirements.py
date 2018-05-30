@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir,
 from scripts import utils
 
 REPO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       '..', '..')  # /scripts/dev -> /scripts -> /
+                        '..', '..')  # /scripts/dev -> /scripts -> /
 REQ_DIR = os.path.join(REPO_DIR, 'misc', 'requirements')
 
 
@@ -116,9 +116,11 @@ def main():
 
         with tempfile.TemporaryDirectory() as tmpdir:
             pip_bin = os.path.join(tmpdir, 'bin', 'pip')
-            subprocess.check_call(['virtualenv', tmpdir])
-            subprocess.check_call([pip_bin, 'install', '-r', filename])
-            reqs = subprocess.check_output([pip_bin, 'freeze']).decode('utf-8')
+            subprocess.run(['virtualenv', tmpdir], check=True)
+            subprocess.run([pip_bin, 'install', '-r', filename], check=True)
+            proc = subprocess.run([pip_bin, 'freeze'], check=True,
+                                  stdout=subprocess.PIPE)
+            reqs = proc.stdout.decode('utf-8')
 
         with open(filename, 'r', encoding='utf-8') as f:
             comments = read_comments(f)

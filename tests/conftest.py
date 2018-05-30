@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -25,16 +25,17 @@ import os
 import sys
 import warnings
 
+import sip
 import pytest
 import hypothesis
-from PyQt5.QtCore import PYQT_VERSION
+from PyQt5.QtCore import qVersion, PYQT_VERSION
 
 pytest.register_assert_rewrite('helpers')
 
 from helpers import logfail
 from helpers.logfail import fail_on_logging
 from helpers.messagemock import message_mock
-from helpers.fixtures import *
+from helpers.fixtures import *  # noqa: F403
 from qutebrowser.utils import qtutils, standarddir, usertypes, utils
 from qutebrowser.misc import objects
 
@@ -56,13 +57,26 @@ def _apply_platform_markers(config, item):
         ('mac', not utils.is_mac, "Requires macOS"),
         ('not_mac', utils.is_mac, "Skipped on macOS"),
         ('not_frozen', getattr(sys, 'frozen', False),
-            "Can't be run when frozen"),
+         "Can't be run when frozen"),
         ('frozen', not getattr(sys, 'frozen', False),
-            "Can only run when frozen"),
+         "Can only run when frozen"),
         ('ci', 'CI' not in os.environ, "Only runs on CI."),
         ('no_ci', 'CI' in os.environ, "Skipped on CI."),
         ('issue2478', utils.is_windows and config.webengine,
          "Broken with QtWebEngine on Windows"),
+        ('issue3572',
+         (qtutils.version_check('5.10', compiled=False, exact=True) or
+          qtutils.version_check('5.10.1', compiled=False, exact=True)) and
+         config.webengine and 'TRAVIS' in os.environ,
+         "Broken with QtWebEngine with Qt 5.10 on Travis"),
+        ('qtbug60673',
+         qtutils.version_check('5.8') and
+         not qtutils.version_check('5.10') and
+         config.webengine,
+         "Broken on webengine due to "
+         "https://bugreports.qt.io/browse/QTBUG-60673"),
+        ('unicode_locale', sys.getfilesystemencoding() == 'ascii',
+         "Skipped because of ASCII locale"),
     ]
 
     for searched_marker, condition, default_reason in markers:
@@ -149,6 +163,17 @@ def pytest_ignore_collect(path):
 
 
 @pytest.fixture(scope='session')
+def qapp_args():
+    """Make QtWebEngine unit tests run on Qt 5.7.1.
+
+    See https://github.com/qutebrowser/qutebrowser/issues/3163
+    """
+    if qVersion() == '5.7.1':
+        return [sys.argv[0], '--disable-seccomp-filter-sandbox']
+    return []
+
+
+@pytest.fixture(scope='session')
 def qapp(qapp):
     """Change the name of the QApplication instance."""
     qapp.setApplicationName('qute_test')
@@ -172,6 +197,12 @@ def pytest_configure(config):
     # pylint: disable=unused-variable
     if config.webengine:
         import PyQt5.QtWebEngineWidgets
+
+    try:
+        # Added in sip 4.19.4
+        sip.enableoverflowchecking(True)
+    except AttributeError:
+        pass
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -214,6 +245,8 @@ def apply_fake_os(monkeypatch, request):
         windows = True
     elif name == 'linux':
         linux = True
+        posix = True
+    elif name == 'posix':
         posix = True
     else:
         raise ValueError("Invalid fake_os {}".format(name))

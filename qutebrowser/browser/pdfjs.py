@@ -1,7 +1,7 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
 # Copyright 2015 Daniel Schadt
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -82,7 +82,7 @@ def fix_urls(asset):
         ('viewer.css', 'qute://pdfjs/web/viewer.css'),
         ('compatibility.js', 'qute://pdfjs/web/compatibility.js'),
         ('locale/locale.properties',
-            'qute://pdfjs/web/locale/locale.properties'),
+         'qute://pdfjs/web/locale/locale.properties'),
         ('l10n.js', 'qute://pdfjs/web/l10n.js'),
         ('../build/pdf.js', 'qute://pdfjs/build/pdf.js'),
         ('debugger.js', 'qute://pdfjs/web/debugger.js'),

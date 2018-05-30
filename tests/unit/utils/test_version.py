@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -30,13 +30,15 @@ import types
 import importlib
 import logging
 import textwrap
-import pkg_resources
+import datetime
 
 import attr
+import pkg_resources
 import pytest
 
 import qutebrowser
 from qutebrowser.utils import version, usertypes, utils
+from qutebrowser.misc import pastebin
 from qutebrowser.browser import pdfjs
 
 
@@ -299,8 +301,8 @@ class TestGitStr:
 def _has_git():
     """Check if git is installed."""
     try:
-        subprocess.check_call(['git', '--version'], stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL)
+        subprocess.run(['git', '--version'], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, check=True)
     except (OSError, subprocess.CalledProcessError):
         return False
     else:
@@ -337,12 +339,13 @@ class TestGitStrSubprocess:
                 # If we don't call this with shell=True it might fail under
                 # some environments on Windows...
                 # http://bugs.python.org/issue24493
-                subprocess.check_call(
+                subprocess.run(
                     'git -C "{}" {}'.format(tmpdir, ' '.join(args)),
-                    env=env, shell=True)
+                    env=env, check=True, shell=True)
             else:
-                subprocess.check_call(
-                    ['git', '-C', str(tmpdir)] + list(args), env=env)
+                subprocess.run(
+                    ['git', '-C', str(tmpdir)] + list(args),
+                    check=True, env=env)
 
         (tmpdir / 'file').write_text("Hello World!", encoding='utf-8')
         _git('init')
@@ -356,7 +359,7 @@ class TestGitStrSubprocess:
     def test_real_git(self, git_repo):
         """Test with a real git repository."""
         ret = version._git_str_subprocess(str(git_repo))
-        assert ret == 'foobar (1970-01-01 01:00:00 +0100)'
+        assert ret == '6e4b65a (1970-01-01 01:00:00 +0100)'
 
     def test_missing_dir(self, tmpdir):
         """Test with a directory which doesn't exist."""
@@ -368,14 +371,14 @@ class TestGitStrSubprocess:
         subprocess.CalledProcessError(1, 'foobar')
     ])
     def test_exception(self, exc, mocker, tmpdir):
-        """Test with subprocess.check_output raising an exception.
+        """Test with subprocess.run raising an exception.
 
         Args:
             exc: The exception to raise.
         """
         m = mocker.patch('qutebrowser.utils.version.os')
         m.path.isdir.return_value = True
-        mocker.patch('qutebrowser.utils.version.subprocess.check_output',
+        mocker.patch('qutebrowser.utils.version.subprocess.run',
                      side_effect=exc)
         ret = version._git_str_subprocess(str(tmpdir))
         assert ret is None
@@ -465,12 +468,12 @@ def test_path_info(monkeypatch, equal):
         equal: Whether system data / data and system config / config are equal.
     """
     patches = {
-        'config': lambda auto=False:
+        'config': lambda auto=False: (
             'AUTO CONFIG PATH' if auto and not equal
-            else 'CONFIG PATH',
-        'data': lambda system=False:
+            else 'CONFIG PATH'),
+        'data': lambda system=False: (
             'SYSTEM DATA PATH' if system and not equal
-            else 'DATA PATH',
+            else 'DATA PATH'),
         'cache': lambda: 'CACHE PATH',
         'runtime': lambda: 'RUNTIME PATH',
     }
@@ -645,6 +648,8 @@ class TestModuleVersions:
             name: The name of the module to check.
             has_version: Whether a __version__ attribute is expected.
         """
+        if name == 'cssutils':
+            pytest.importorskip(name)
         module = importlib.import_module(name)
         assert hasattr(module, '__version__') == has_version
 
@@ -702,6 +707,15 @@ class TestOsInfo:
         expected = ['OS Version: {}'.format(mac_ver_str)]
         assert ret == expected
 
+    @pytest.mark.fake_os('posix')
+    def test_posix_fake(self, monkeypatch):
+        """Test with a fake posix platform."""
+        uname_tuple = ('PosixOS', 'localhost', '1.0', '1.0', 'i386', 'i386')
+        monkeypatch.setattr(version.platform, 'uname', lambda: uname_tuple)
+        ret = version._os_info()
+        expected = ['OS Version: PosixOS localhost 1.0 1.0 i386 i386']
+        assert ret == expected
+
     @pytest.mark.fake_os('unknown')
     def test_unknown_fake(self):
         """Test with a fake unknown platform."""
@@ -722,6 +736,11 @@ class TestOsInfo:
     @pytest.mark.mac
     def test_mac_real(self):
         """Make sure there are no exceptions with a real macOS."""
+        version._os_info()
+
+    @pytest.mark.posix
+    def test_posix_real(self):
+        """Make sure there are no exceptions with a real posix."""
         version._os_info()
 
 
@@ -793,7 +812,7 @@ class FakeQSslSocket:
     def sslLibraryVersionString(self):
         """Fake for QSslSocket::sslLibraryVersionString()."""
         if self._version is None:
-            raise AssertionError("Got called with version None!")
+            raise utils.Unreachable("Got called with version None!")
         return self._version
 
 
@@ -855,6 +874,7 @@ def test_version_output(params, stubs, monkeypatch):
         '_git_str': lambda: ('GIT COMMIT' if params.git_commit else None),
         'platform.python_implementation': lambda: 'PYTHON IMPLEMENTATION',
         'platform.python_version': lambda: 'PYTHON VERSION',
+        'sys.executable': 'EXECUTABLE PATH',
         'PYQT_VERSION_STR': 'PYQT VERSION',
         'earlyinit.qt_version': lambda: 'QT VERSION',
         '_module_versions': lambda: ['MODULE VERSION 1', 'MODULE VERSION 2'],
@@ -869,6 +889,7 @@ def test_version_output(params, stubs, monkeypatch):
                          stubs.FakeQApplication(instance=None)),
         'QLibraryInfo.location': (lambda _loc: 'QT PATH'),
         'sql.version': lambda: 'SQLITE VERSION',
+        '_uptime': lambda: datetime.timedelta(hours=1, minutes=23, seconds=45),
     }
 
     substitutions = {
@@ -877,6 +898,7 @@ def test_version_output(params, stubs, monkeypatch):
         'qt': 'QT VERSION',
         'frozen': str(params.frozen),
         'import_path': import_path,
+        'python_path': 'EXECUTABLE PATH',
     }
 
     if params.with_webkit:
@@ -912,6 +934,8 @@ def test_version_output(params, stubs, monkeypatch):
     else:
         monkeypatch.delattr(sys, 'frozen', raising=False)
 
+    substitutions['uptime'] = "1:23:45"
+
     template = textwrap.dedent("""
         qutebrowser vVERSION{git_commit}
         Backend: {backend}
@@ -929,17 +953,89 @@ def test_version_output(params, stubs, monkeypatch):
         Platform: PLATFORM, ARCHITECTURE{linuxdist}
         Frozen: {frozen}
         Imported from {import_path}
+        Using Python from {python_path}
         Qt library executable path: QT PATH, data path: QT PATH
         {osinfo}
         Paths:
         PATH DESC: PATH NAME
+
+        Uptime: {uptime}
     """.lstrip('\n'))
 
     expected = template.rstrip('\n').format(**substitutions)
     assert version.version() == expected
 
 
-def test_opengl_vendor():
+def test_opengl_vendor(qapp):
     """Simply call version.opengl_vendor() and see if it doesn't crash."""
     pytest.importorskip("PyQt5.QtOpenGL")
     return version.opengl_vendor()
+
+
+@pytest.fixture
+def pbclient(stubs):
+    http_stub = stubs.HTTPPostStub()
+    client = pastebin.PastebinClient(http_stub)
+    yield client
+    version.pastebin_url = None
+
+
+def test_pastebin_version(pbclient, message_mock, monkeypatch, qtbot):
+    """Test version.pastebin_version() sets the url."""
+    monkeypatch.setattr('qutebrowser.utils.version.version',
+                        lambda: "dummy")
+    monkeypatch.setattr('qutebrowser.utils.utils.log_clipboard', True)
+
+    version.pastebin_version(pbclient)
+    pbclient.success.emit("test")
+
+    msg = message_mock.getmsg(usertypes.MessageLevel.info)
+    assert msg.text == "Version url test yanked to clipboard."
+    assert version.pastebin_url == "test"
+
+
+def test_pastebin_version_twice(pbclient, monkeypatch):
+    """Test whether calling pastebin_version twice sends no data."""
+    monkeypatch.setattr('qutebrowser.utils.version.version',
+                        lambda: "dummy")
+
+    version.pastebin_version(pbclient)
+    pbclient.success.emit("test")
+
+    pbclient.url = None
+    pbclient.data = None
+    version.pastebin_url = "test2"
+
+    version.pastebin_version(pbclient)
+    assert pbclient.url is None
+    assert pbclient.data is None
+    assert version.pastebin_url == "test2"
+
+
+def test_pastebin_version_error(pbclient, caplog, message_mock, monkeypatch):
+    """Test version.pastebin_version() with errors."""
+    monkeypatch.setattr('qutebrowser.utils.version.version',
+                        lambda: "dummy")
+
+    version.pastebin_url = None
+    with caplog.at_level(logging.ERROR):
+        version.pastebin_version(pbclient)
+        pbclient._client.error.emit("test")
+
+    assert version.pastebin_url is None
+
+    msg = message_mock.getmsg(usertypes.MessageLevel.error)
+    assert msg.text == "Failed to pastebin version info: test"
+
+
+def test_uptime(monkeypatch, qapp):
+    """Test _uptime runs and check if microseconds are dropped."""
+    launch_time = datetime.datetime(1, 1, 1, 1, 1, 1, 1)
+    monkeypatch.setattr(qapp, "launch_time", launch_time, raising=False)
+
+    class FakeDateTime(datetime.datetime):
+        now = lambda x=datetime.datetime(1, 1, 1, 1, 1, 1, 2): x
+    monkeypatch.setattr('datetime.datetime', FakeDateTime)
+
+    uptime_delta = version._uptime()
+    assert uptime_delta == datetime.timedelta(0)

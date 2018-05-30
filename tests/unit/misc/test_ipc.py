@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -294,7 +294,6 @@ class TestListen:
 
     @pytest.mark.posix
     def test_permissions_posix(self, ipc_server):
-        # pylint: disable=no-member,useless-suppression
         ipc_server.listen()
         sockfile = ipc_server._server.fullServerName()
         sockdir = os.path.dirname(sockfile)
@@ -302,8 +301,10 @@ class TestListen:
         file_stat = os.stat(sockfile)
         dir_stat = os.stat(sockdir)
 
+        # pylint: disable=no-member,useless-suppression
         file_owner_ok = file_stat.st_uid == os.getuid()
         dir_owner_ok = dir_stat.st_uid == os.getuid()
+        # pylint: enable=no-member,useless-suppression
         file_mode_ok = file_stat.st_mode & 0o777 == 0o700
         dir_mode_ok = dir_stat.st_mode & 0o777 == 0o700
 
@@ -460,11 +461,11 @@ NEW_VERSION = str(ipc.PROTOCOL_VERSION + 1).encode('utf-8')
     (b'{"valid json without args": true}\n', 'Missing args'),
     (b'{"args": []}\n', 'Missing target_arg'),
     (b'{"args": [], "target_arg": null, "protocol_version": ' + OLD_VERSION +
-        b'}\n', 'incompatible version'),
+     b'}\n', 'incompatible version'),
     (b'{"args": [], "target_arg": null, "protocol_version": ' + NEW_VERSION +
-        b'}\n', 'incompatible version'),
+     b'}\n', 'incompatible version'),
     (b'{"args": [], "target_arg": null, "protocol_version": "foo"}\n',
-        'invalid version'),
+     'invalid version'),
     (b'{"args": [], "target_arg": null}\n', 'invalid version'),
 ])
 def test_invalid_data(qtbot, ipc_server, connected_socket, caplog, data, msg):
@@ -671,9 +672,9 @@ class TestSendOrListen:
 
     @pytest.mark.parametrize('has_error, exc_name, exc_msg', [
         (True, 'SocketError',
-            'Error while writing to running instance: Error string (error 0)'),
+         'Error while writing to running instance: Error string (error 0)'),
         (False, 'AddressInUseError',
-            'Error while listening to IPC server: Error string (error 8)'),
+         'Error while listening to IPC server: Error string (error 8)'),
     ])
     def test_address_in_use_error(self, qlocalserver_mock, qlocalsocket_mock,
                                   stubs, caplog, args, has_error, exc_name,
@@ -729,8 +730,6 @@ class TestSendOrListen:
             with pytest.raises(ipc.Error):
                 ipc.send_or_listen(args)
 
-        assert len(caplog.records) == 1
-
         error_msgs = [
             'Handling fatal misc.ipc.ListenError with --no-err-windows!',
             '',
@@ -738,9 +737,9 @@ class TestSendOrListen:
             'pre_text: ',
             'post_text: Maybe another instance is running but frozen?',
             ('exception text: Error while listening to IPC server: Error '
-                'string (error 4)'),
+             'string (error 4)'),
         ]
-        assert caplog.records[0].msg == '\n'.join(error_msgs)
+        assert caplog.records[-1].msg == '\n'.join(error_msgs)
 
 
 @pytest.mark.windows

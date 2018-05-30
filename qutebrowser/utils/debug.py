@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -87,9 +87,10 @@ def log_signals(obj):
             return ret
 
         obj.__init__ = new_init
-        return obj
     else:
         connect_log_slot(obj)
+
+    return obj
 
 
 def qenum_key(base, value, add_base=False, klass=None):
@@ -184,7 +185,7 @@ def signal_name(sig):
     Return:
         The cleaned up signal name.
     """
-    m = re.match(r'[0-9]+(.*)\(.*\)', sig.signal)
+    m = re.fullmatch(r'[0-9]+(.*)\(.*\)', sig.signal)
     return m.group(1)
 
 
@@ -232,7 +233,7 @@ def format_call(func, args=None, kwargs=None, full=True):
     return '{}({})'.format(name, format_args(args, kwargs))
 
 
-class log_time:  # pylint: disable=invalid-name
+class log_time:  # noqa: N801,N806 pylint: disable=invalid-name
 
     """Log the time an operation takes.
 
@@ -266,6 +267,7 @@ class log_time:  # pylint: disable=invalid-name
     def __call__(self, func):
         @functools.wraps(func)
         def wrapped(*args, **kwargs):
+            """Call the original function."""
             with self:
                 func(*args, **kwargs)
 

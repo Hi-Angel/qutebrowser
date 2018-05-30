@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -29,8 +29,10 @@ import pytest
 from PyQt5.QtCore import QRect, QPoint, QUrl
 QWebElement = pytest.importorskip('PyQt5.QtWebKit').QWebElement
 
-from qutebrowser.browser import webelem
+from qutebrowser.browser import webelem, browsertab
 from qutebrowser.browser.webkit import webkitelem
+from qutebrowser.misc import objects
+from qutebrowser.utils import usertypes
 
 
 def get_webelem(geometry=None, frame=None, *, null=False, style=None,
@@ -51,7 +53,6 @@ def get_webelem(geometry=None, frame=None, *, null=False, style=None,
                         evaluateJavaScript.
         zoom_text_only: Whether zoom.text_only is set in the config
     """
-    # pylint: disable=too-many-locals,too-many-branches
     elem = mock.Mock()
     elem.isNull.return_value = null
     elem.geometry.return_value = geometry
@@ -126,7 +127,9 @@ def get_webelem(geometry=None, frame=None, *, null=False, style=None,
         return style_dict[name]
 
     elem.styleProperty.side_effect = _style_property
-    wrapped = webkitelem.WebKitElement(elem, tab=None)
+    tab = mock.Mock(autospec=browsertab.AbstractTab)
+    tab.is_deleted.return_value = False
+    wrapped = webkitelem.WebKitElement(elem, tab=tab)
     return wrapped
 
 
@@ -715,8 +718,10 @@ class TestRectOnView:
 
     @pytest.mark.parametrize('js_rect', [None, {}])
     @pytest.mark.parametrize('zoom_text_only', [True, False])
-    def test_zoomed(self, stubs, config_stub, js_rect, zoom_text_only):
+    def test_zoomed(self, stubs, config_stub, js_rect, monkeypatch,
+                    zoom_text_only):
         """Make sure the coordinates are adjusted when zoomed."""
+        monkeypatch.setattr(objects, 'backend', usertypes.Backend.QtWebKit)
         config_stub.val.zoom.text_only = zoom_text_only
         geometry = QRect(10, 10, 4, 4)
         frame = stubs.FakeWebFrame(QRect(0, 0, 100, 100), zoom=0.5)

@@ -1,5 +1,5 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 
 # This file is part of qutebrowser.
 #
@@ -37,6 +37,7 @@ from PyQt5.QtNetwork import QNetworkProxy
 from qutebrowser.config import configtypes, configexc
 from qutebrowser.utils import debug, utils, qtutils
 from qutebrowser.browser.network import pac
+from qutebrowser.keyinput import keyutils
 from tests.helpers import utils as testutils
 
 
@@ -340,13 +341,13 @@ class TestBaseType:
     @pytest.mark.parametrize('valid_values, completions', [
         # Without description
         (['foo', 'bar'],
-            [('foo', ''), ('bar', '')]),
+         [('foo', ''), ('bar', '')]),
         # With description
         ([('foo', "foo desc"), ('bar', "bar desc")],
-            [('foo', "foo desc"), ('bar', "bar desc")]),
+         [('foo', "foo desc"), ('bar', "bar desc")]),
         # With mixed description
         ([('foo', "foo desc"), 'bar'],
-            [('foo', "foo desc"), ('bar', "")]),
+         [('foo', "foo desc"), ('bar', "")]),
     ])
     def test_complete_without_desc(self, klass, valid_values, completions):
         """Test complete with valid_values set without description."""
@@ -489,9 +490,9 @@ class TestString:
 
     @pytest.mark.parametrize('valid_values, expected', [
         (configtypes.ValidValues('one', 'two'),
-            [('one', ''), ('two', '')]),
+         [('one', ''), ('two', '')]),
         (configtypes.ValidValues(('1', 'one'), ('2', 'two')),
-            [('1', 'one'), ('2', 'two')]),
+         [('1', 'one'), ('2', 'two')]),
     ])
     def test_complete_valid_values(self, klass, valid_values, expected):
         assert klass(valid_values=valid_values).complete() == expected
@@ -530,6 +531,17 @@ class FlagListSubclass(configtypes.FlagList):
         if set_valid_values:
             self.valtype.valid_values = configtypes.ValidValues(
                 'foo', 'bar', 'baz')
+
+
+class FromObjType(configtypes.BaseType):
+
+    """Config type to test from_obj for List/Dict."""
+
+    def from_obj(self, value):
+        return int(value)
+
+    def to_py(self, value):
+        return value
 
 
 class TestList:
@@ -645,6 +657,12 @@ class TestList:
         typ = configtypes.List(valtype=valtype)
         with pytest.raises(AssertionError):
             typ.to_doc([['foo']])
+
+    def test_from_obj_sub(self):
+        """Make sure the list calls from_obj() on sub-types."""
+        typ = configtypes.List(valtype=FromObjType())
+        value = typ.from_obj(['1', '2'])
+        assert value == [1, 2]
 
 
 class TestFlagList:
@@ -1616,19 +1634,19 @@ class TestDict:
             else:
                 d.to_py(val)
 
-    @hypothesis.given(val=strategies.dictionaries(strategies.text(min_size=1),
-                                                  strategies.booleans()))
+    @hypothesis.given(val=strategies.dictionaries(
+        strategies.text(min_size=1, alphabet=strategies.characters(
+            # No control characters, surrogates, or codepoints encoded as
+            # surrogate
+            blacklist_categories=['Cc', 'Cs'], max_codepoint=0xFFFF)),
+        strategies.booleans()))
     def test_hypothesis(self, klass, val):
         d = klass(keytype=configtypes.String(),
                   valtype=configtypes.Bool(),
                   none_ok=True)
-        try:
-            converted = d.to_py(val)
-            expected = converted if converted else None
-            assert d.from_str(d.to_str(converted)) == expected
-        except configexc.ValidationError:
-            # Invalid unicode in the string, etc...
-            hypothesis.assume(False)
+        converted = d.to_py(val)
+        expected = converted if converted else None
+        assert d.from_str(d.to_str(converted)) == expected
 
     @hypothesis.given(val=strategies.dictionaries(strategies.text(min_size=1),
                                                   strategies.booleans()))
@@ -1663,6 +1681,13 @@ class TestDict:
         doc = typ.to_doc(val)
         print(doc)
         assert doc == expected
+
+    def test_from_obj_sub(self):
+        """Make sure the dict calls from_obj() on sub-types."""
+        typ = configtypes.Dict(keytype=configtypes.String(),
+                               valtype=FromObjType())
+        value = typ.from_obj({'1': '2'})
+        assert value == {'1': 2}
 
 
 def unrequired_class(**kwargs):
@@ -1815,9 +1840,12 @@ class TestShellCommand:
 
     @pytest.mark.parametrize('kwargs, val, expected', [
         ({}, '[foobar]', ['foobar']),
-        ({'placeholder': '{}'}, '[foo, "{}", bar]', ['foo', '{}', 'bar']),
-        ({'placeholder': '{}'}, '["foo{}bar"]', ['foo{}bar']),
-        ({'placeholder': '{}'}, '[foo, "bar {}"]', ['foo', 'bar {}']),
+        ({'placeholder': True}, '[foo, "{}", bar]', ['foo', '{}', 'bar']),
+        ({'placeholder': True}, '["foo{}bar"]', ['foo{}bar']),
+        ({'placeholder': True}, '[foo, "bar {}"]', ['foo', 'bar {}']),
+        ({'placeholder': True}, '[f, "{file}", b]', ['f', '{file}', 'b']),
+        ({'placeholder': True}, '["f{file}b"]', ['f{file}b']),
+        ({'placeholder': True}, '[f, "b {file}"]', ['f', 'b {file}']),
     ])
     def test_valid(self, klass, kwargs, val, expected):
         cmd = klass(**kwargs)
@@ -1825,8 +1853,15 @@ class TestShellCommand:
         assert cmd.to_py(expected) == expected
 
     @pytest.mark.parametrize('kwargs, val', [
-        ({'placeholder': '{}'}, '[foo, bar]'),
-        ({'placeholder': '{}'}, '[foo, "{", "}", bar'),
+        ({'placeholder': True}, '[foo, bar]'),
+        ({'placeholder': True}, '[foo, "{", "}", bar'),
+        ({'placeholder': True}, '[foo, bar]'),
+        ({'placeholder': True}, '[foo, "{fi", "le}", bar'),
+
+        # Like valid ones but with wrong placeholder
+        ({'placeholder': True}, '[f, "{wrong}", b]'),
+        ({'placeholder': True}, '["f{wrong}b"]'),
+        ({'placeholder': True}, '[f, "b {wrong}"]'),
     ])
     def test_from_str_invalid(self, klass, kwargs, val):
         with pytest.raises(configexc.ValidationError):
@@ -1843,14 +1878,14 @@ class TestProxy:
         ('system', configtypes.SYSTEM_PROXY),
         ('none', QNetworkProxy(QNetworkProxy.NoProxy)),
         ('socks://example.com/',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com')),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com')),
         ('socks5://foo:bar@example.com:2323',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 2323,
-                          'foo', 'bar')),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 2323,
+                       'foo', 'bar')),
         ('pac+http://example.com/proxy.pac',
-            pac.PACFetcher(QUrl('pac+http://example.com/proxy.pac'))),
+         pac.PACFetcher(QUrl('pac+http://example.com/proxy.pac'))),
         ('pac+file:///tmp/proxy.pac',
-            pac.PACFetcher(QUrl('pac+file:///tmp/proxy.pac'))),
+         pac.PACFetcher(QUrl('pac+file:///tmp/proxy.pac'))),
     ])
     def test_to_py_valid(self, klass, val, expected):
         actual = klass().to_py(val)
@@ -2048,11 +2083,20 @@ class TestKey:
         return configtypes.Key
 
     @pytest.mark.parametrize('val, expected', [
-        ('gC', 'gC'),
-        ('<Control-x>', '<ctrl+x>')
+        ('gC', keyutils.KeySequence.parse('gC')),
+        ('<Control-x>', keyutils.KeySequence.parse('<ctrl+x>')),
+        ('<alt-1>', keyutils.KeySequence.parse('<alt+1>')),
+        ('0', keyutils.KeySequence.parse('0')),
+        ('1', keyutils.KeySequence.parse('1')),
+        ('a1', keyutils.KeySequence.parse('a1')),
     ])
     def test_to_py_valid(self, klass, val, expected):
         assert klass().to_py(val) == expected
+
+    @pytest.mark.parametrize('val', ['\U00010000', '<blub>'])
+    def test_to_py_invalid(self, klass, val):
+        with pytest.raises(configexc.ValidationError):
+            klass().to_py(val)
 
 
 @pytest.mark.parametrize('first, second, equal', [

@@ -248,6 +248,18 @@ Feature: Tab management
             - data/numbers/2.txt
             - data/numbers/3.txt
 
+    Scenario: :tab-focus with current tab number and --no-last
+        When I open data/numbers/1.txt
+        And I open data/numbers/2.txt in a new tab
+        And I open data/numbers/3.txt in a new tab
+        And I run :tab-focus 1
+        And I run :tab-focus 3
+        And I run :tab-focus --no-last 3
+        Then the following tabs should be open:
+            - data/numbers/1.txt
+            - data/numbers/2.txt
+            - data/numbers/3.txt (active)
+
     Scenario: :tab-focus with -1
         When I open data/numbers/1.txt
         And I open data/numbers/2.txt in a new tab
@@ -324,13 +336,13 @@ Feature: Tab management
         When I set tabs.wrap to false
         And I open data/numbers/1.txt
         And I run :tab-prev
-        Then the error "First tab" should be shown
+        Then "First tab" should be logged
 
     Scenario: :tab-next with last tab without wrap
         When I set tabs.wrap to false
         And I open data/numbers/1.txt
         And I run :tab-next
-        Then the error "Last tab" should be shown
+        Then "Last tab" should be logged
 
     Scenario: :tab-prev on first tab with wrap
         When I set tabs.wrap to true
@@ -620,15 +632,10 @@ Feature: Tab management
 
     # https://github.com/qutebrowser/qutebrowser/issues/2289
 
-    @qtwebkit_skip @qt==5.8.0
-    Scenario: Cloning a tab with a special URL
-        When I open chrome://gpu
-        And I run :tab-clone
-        Then the error "Can't serialize special URL!" should be shown
-
     @qtwebkit_skip @qt<5.9
     Scenario: Cloning a tab with a view-source URL
-        When I open view-source:http://localhost:(port)
+        When I open /
+        And I open view-source:http://localhost:(port)
         And I run :tab-clone
         Then the error "Can't serialize special URL!" should be shown
 
@@ -637,28 +644,6 @@ Feature: Tab management
         When I open chrome://gpu
         And I run :tab-clone
         Then no crash should happen
-
-    # :tab-detach
-
-    Scenario: Detaching a tab
-        When I open data/numbers/1.txt
-        And I open data/numbers/2.txt in a new tab
-        And I run :tab-detach
-        And I wait until data/numbers/2.txt is loaded
-        Then the session should look like:
-            windows:
-            - tabs:
-              - history:
-                - url: about:blank
-                - url: http://localhost:*/data/numbers/1.txt
-            - tabs:
-              - history:
-                - url: http://localhost:*/data/numbers/2.txt
-
-    Scenario: Detach tab from window with only one tab
-        When I open data/hello.txt
-        And I run :tab-detach
-        Then the error "Cannot detach one tab." should be shown
 
     # :undo
 
@@ -735,6 +720,7 @@ Feature: Tab management
         Then the following tabs should be open:
             - data/hello.txt (active)
 
+    @flaky
     Scenario: Double-undo with single tab on tabs.last_close default page
         Given I have a fresh instance
         When I open about:blank
@@ -781,6 +767,7 @@ Feature: Tab management
             - data/numbers/3.txt
             - data/numbers/2.txt
 
+    @flaky
     Scenario: Undo a tab closed after new tab opened
         When I open data/numbers/1.txt
         And I open data/numbers/2.txt in a new tab
@@ -788,6 +775,18 @@ Feature: Tab management
         And I open data/numbers/3.txt in a new tab
         And I run :undo
         And I wait until data/numbers/1.txt is loaded
+        Then the following tabs should be open:
+            - data/numbers/1.txt (active)
+            - data/numbers/2.txt
+            - data/numbers/3.txt
+
+    Scenario: Undo the closing of tabs using :tab-only
+        When I open data/numbers/1.txt
+        And I open data/numbers/2.txt in a new tab
+        And I open data/numbers/3.txt in a new tab
+        And I run :tab-focus 2
+        And I run :tab-only
+        And I run :undo
         Then the following tabs should be open:
             - data/numbers/1.txt (active)
             - data/numbers/2.txt
@@ -899,13 +898,13 @@ Feature: Tab management
 
     Scenario: :buffer without args or count
         When I run :buffer
-        Then the error "buffer: Either a count or the argument index must be specified." should be shown
+        Then qute://tabs should be loaded
 
     Scenario: :buffer with a matching title
         When I open data/title.html
         And I open data/search.html in a new tab
         And I open data/scroll/simple.html in a new tab
-        And I run :buffer "Searching text"
+        And I run :buffer Searching text
         And I wait for "Current tab changed, focusing <qutebrowser.browser.* tab_id=* url='http://localhost:*/data/search.html'>" in the log
         Then the following tabs should be open:
             - data/title.html
@@ -913,7 +912,7 @@ Feature: Tab management
             - data/scroll/simple.html
 
     Scenario: :buffer with no matching title
-        When I run :buffer "invalid title"
+        When I run :buffer invalid title
         Then the error "No matching tab for: invalid title" should be shown
 
     Scenario: :buffer with matching title and two windows
@@ -922,7 +921,7 @@ Feature: Tab management
         And I open data/scroll/simple.html in a new tab
         And I open data/caret.html in a new window
         And I open data/paste_primary.html in a new tab
-        And I run :buffer "Scrolling"
+        And I run :buffer Scrolling
         And I wait for "Focus object changed: *" in the log
         Then the session should look like:
             windows:
@@ -945,12 +944,12 @@ Feature: Tab management
 
     Scenario: :buffer with no matching index
         When I open data/title.html
-        And I run :buffer "666"
+        And I run :buffer 666
         Then the error "There's no tab with index 666!" should be shown
 
     Scenario: :buffer with no matching window index
         When I open data/title.html
-        And I run :buffer "99/1"
+        And I run :buffer 99/1
         Then the error "There's no window with id 99!" should be shown
 
     @skip   # Too flaky
@@ -962,7 +961,7 @@ Feature: Tab management
         And I run :open -w http://localhost:(port)/data/caret.html
         And I open data/paste_primary.html in a new tab
         And I wait until data/caret.html is loaded
-        And I run :buffer "0/2"
+        And I run :buffer 0/2
         And I wait for "Focus object changed: *" in the log
         Then the session should look like:
             windows:
@@ -985,30 +984,105 @@ Feature: Tab management
 
     Scenario: :buffer with wrong argument (-1)
         When I open data/title.html
-        And I run :buffer "-1"
+        And I run :buffer -1
         Then the error "There's no tab with index -1!" should be shown
 
     Scenario: :buffer with wrong argument (/)
         When I open data/title.html
-        And I run :buffer "/"
+        And I run :buffer /
         Then the following tabs should be open:
             - data/title.html (active)
 
     Scenario: :buffer with wrong argument (//)
         When I open data/title.html
-        And I run :buffer "//"
+        And I run :buffer //
         Then the following tabs should be open:
             - data/title.html (active)
 
     Scenario: :buffer with wrong argument (0/x)
         When I open data/title.html
-        And I run :buffer "0/x"
+        And I run :buffer 0/x
         Then the error "No matching tab for: 0/x" should be shown
 
     Scenario: :buffer with wrong argument (1/2/3)
         When I open data/title.html
-        And I run :buffer "1/2/3"
+        And I run :buffer 1/2/3
         Then the error "No matching tab for: 1/2/3" should be shown
+
+    # :tab-take
+
+    @xfail_norun  # Needs qutewm
+    Scenario: Take a tab from another window
+        Given I have a fresh instance
+        When I open data/numbers/1.txt
+        And I open data/numbers/2.txt in a new window
+        And I run :tab-take 0/1
+        Then the session should look like:
+            windows:
+            - tabs:
+              - history:
+                - url: about:blank
+            - tabs:
+              - history:
+                - url: http://localhost:*/data/numbers/2.txt
+              - history:
+                - url: http://localhost:*/data/numbers/1.txt
+
+    Scenario: Take a tab from the same window
+        Given I have a fresh instance
+        When I open data/numbers/1.txt
+        And I run :tab-take 0/1
+        Then the error "Can't take a tab from the same window" should be shown
+
+    # :tab-give
+
+    @xfail_norun  # Needs qutewm
+    Scenario: Give a tab to another window
+        Given I have a fresh instance
+        When I open data/numbers/1.txt
+        And I open data/numbers/2.txt in a new window
+        And I run :tab-give 0
+        Then the session should look like:
+            windows:
+            - tabs:
+              - history:
+                - url: http://localhost:*/data/numbers/1.txt
+              - history:
+                - url: http://localhost:*/data/numbers/2.txt
+            - tabs:
+              - history:
+                - url: about:blank
+
+    Scenario: Give a tab to the same window
+        Given I have a fresh instance
+        When I open data/numbers/1.txt
+        And I run :tab-give 0
+        Then the error "Can't give a tab to the same window" should be shown
+
+    Scenario: Give a tab to a new window
+        When I open data/numbers/1.txt
+        And I open data/numbers/2.txt in a new tab
+        And I run :tab-give
+        And I wait until data/numbers/2.txt is loaded
+        Then the session should look like:
+            windows:
+            - tabs:
+              - history:
+                - url: about:blank
+                - url: http://localhost:*/data/numbers/1.txt
+            - tabs:
+              - history:
+                - url: http://localhost:*/data/numbers/2.txt
+
+    Scenario: Give a tab from window with only one tab
+        When I open data/hello.txt
+        And I run :tab-give
+        Then the error "Cannot detach from a window with only one tab" should be shown
+
+    Scenario: Give a tab to a window ID that does not exist
+        When I open data/hello.txt
+        And I run :tab-give 99
+        Then the error "There's no window with id 99!" should be shown
 
     # Other
 
@@ -1115,7 +1189,7 @@ Feature: Tab management
         And I run :tab-pin
         And I run :tab-next
         And I run :tab-only
-        And I wait for "*want to close a pinned tab*" in the log
+        And I wait for "*want to close pinned tabs*" in the log
         And I run :prompt-accept yes
         Then the following tabs should be open:
             - data/numbers/1.txt (active) (pinned)
@@ -1127,7 +1201,7 @@ Feature: Tab management
         And I run :tab-pin
         And I run :tab-next
         And I run :tab-only
-        And I wait for "*want to close a pinned tab*" in the log
+        And I wait for "*want to close pinned tabs*" in the log
         And I run :prompt-accept no
         Then the following tabs should be open:
             - data/numbers/1.txt (active) (pinned)
@@ -1145,6 +1219,14 @@ Feature: Tab management
         When I open data/numbers/1.txt
         And I run :tab-pin
         And I open data/numbers/2.txt without waiting
+        Then the message "Tab is pinned!" should be shown
+        And the following tabs should be open:
+            - data/numbers/1.txt (active) (pinned)
+
+    Scenario: :home on a pinned tab
+        When I open data/numbers/1.txt
+        And I run :tab-pin
+        And I run :home
         Then the message "Tab is pinned!" should be shown
         And the following tabs should be open:
             - data/numbers/1.txt (active) (pinned)

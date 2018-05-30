@@ -279,7 +279,7 @@ Feature: Saving and loading sessions
 
   Scenario: Saving session with --quiet
     When I run :session-save --quiet quiet_session
-    Then "Saved session quiet_session." should not be logged
+    Then "Saved session quiet_session." should be logged with level debug
     And the session quiet_session should exist
 
   Scenario: Saving session with --only-active-window
@@ -363,6 +363,16 @@ Feature: Saving and loading sessions
     And I replace "about:blank" by "http://localhost:(port)/data/numbers/2.txt" in the "loaded_session" session file
     And I run :session-load loaded_session
     Then data/numbers/2.txt should be loaded
+  
+  @qtwebengine_flaky
+  Scenario: Loading and deleting a session
+    When I open about:blank
+    And I run :session-save loaded_session
+    And I replace "about:blank" by "http://localhost:(port)/data/numbers/2.txt" in the "loaded_session" session file
+    And I run :session-load --delete loaded_session
+    And I wait for "Loaded & deleted session loaded_session." in the log
+    Then data/numbers/2.txt should be loaded
+    And the session loaded_session should not exist
 
   Scenario: Loading a session which doesn't exist
     When I run :session-load inexistent_session

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2017-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -755,6 +755,6 @@ def get_diff():
     lexer = pygments.lexers.DiffLexer()
     formatter = pygments.formatters.HtmlFormatter(
         full=True, linenos='table',
-        title='Config diff')
+        title='Diffing pre-1.0 default config with pre-1.0 modified config')
     # pylint: enable=no-member
     return pygments.highlight(conf_diff + key_diff, lexer, formatter)

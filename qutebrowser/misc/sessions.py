@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -21,6 +21,8 @@
 
 import os
 import os.path
+import itertools
+import urllib
 
 import sip
 from PyQt5.QtCore import QUrl, QObject, QPoint, QTimer
@@ -205,7 +207,13 @@ class SessionManager(QObject):
         for idx, item in enumerate(tab.history):
             qtutils.ensure_valid(item)
             item_data = self._save_tab_item(tab, idx, item)
-            data['history'].append(item_data)
+            if item.url().scheme() == 'qute' and item.url().host() == 'back':
+                # don't add qute://back to the session file
+                if item_data.get('active', False) and data['history']:
+                    # mark entry before qute://back as active
+                    data['history'][-1]['active'] = True
+            else:
+                data['history'].append(item_data)
         return data
 
     def _save_all(self, *, only_window=None, with_private=False):
@@ -238,7 +246,7 @@ class SessionManager(QObject):
             if tabbed_browser.private:
                 win_data['private'] = True
             for i, tab in enumerate(tabbed_browser.widgets()):
-                active = i == tabbed_browser.currentIndex()
+                active = i == tabbed_browser.widget.currentIndex()
                 win_data['tabs'].append(self._save_tab(tab, active))
             data['windows'].append(win_data)
         return data
@@ -251,7 +259,7 @@ class SessionManager(QObject):
                   object.
         """
         if name is default:
-            name = config.val.session_default_name
+            name = config.val.session.default_name
             if name is None:
                 if self._current is not None:
                     name = self._current
@@ -283,7 +291,7 @@ class SessionManager(QObject):
             data = self._last_window_session
             if data is None:
                 log.sessions.error("last_window_session is None while saving!")
-                return
+                return None
         else:
             data = self._save_all(only_window=only_window,
                                   with_private=with_private)
@@ -323,7 +331,18 @@ class SessionManager(QObject):
     def _load_tab(self, new_tab, data):
         """Load yaml data into a newly opened tab."""
         entries = []
-        for histentry in data['history']:
+        lazy_load = []
+        # use len(data['history'])
+        # -> dropwhile empty if not session.lazy_session
+        lazy_index = len(data['history'])
+        gen = itertools.chain(
+            itertools.takewhile(lambda _: not lazy_load,
+                                enumerate(data['history'])),
+            enumerate(lazy_load),
+            itertools.dropwhile(lambda i: i[0] < lazy_index,
+                                enumerate(data['history'])))
+
+        for i, histentry in gen:
             user_data = {}
 
             if 'zoom' in data:
@@ -347,6 +366,20 @@ class SessionManager(QObject):
             if 'pinned' in histentry:
                 new_tab.data.pinned = histentry['pinned']
 
+            if (config.val.session.lazy_restore and
+                    histentry.get('active', False) and
+                    not histentry['url'].startswith('qute://back')):
+                # remove "active" mark and insert back page marked as active
+                lazy_index = i + 1
+                lazy_load.append({
+                    'title': histentry['title'],
+                    'url':
+                        'qute://back#' +
+                        urllib.parse.quote(histentry['title']),
+                    'active': True
+                })
+                histentry['active'] = False
+
             active = histentry.get('active', False)
             url = QUrl.fromEncoded(histentry['url'].encode('ascii'))
             if 'original-url' in histentry:
@@ -360,6 +393,7 @@ class SessionManager(QObject):
             entries.append(entry)
             if active:
                 new_tab.title_changed.emit(histentry['title'])
+
         try:
             new_tab.history.load_items(entries)
         except ValueError as e:
@@ -388,16 +422,17 @@ class SessionManager(QObject):
                                         window=window.win_id)
             tab_to_focus = None
             for i, tab in enumerate(win['tabs']):
-                new_tab = tabbed_browser.tabopen()
+                new_tab = tabbed_browser.tabopen(background=False)
                 self._load_tab(new_tab, tab)
                 if tab.get('active', False):
                     tab_to_focus = i
                 if new_tab.data.pinned:
-                    tabbed_browser.set_tab_pinned(new_tab, new_tab.data.pinned)
+                    tabbed_browser.widget.set_tab_pinned(new_tab,
+                                                         new_tab.data.pinned)
             if tab_to_focus is not None:
-                tabbed_browser.setCurrentIndex(tab_to_focus)
+                tabbed_browser.widget.setCurrentIndex(tab_to_focus)
             if win.get('active', False):
-                QTimer.singleShot(0, tabbed_browser.activateWindow)
+                QTimer.singleShot(0, tabbed_browser.widget.activateWindow)
 
         if data['windows']:
             self.did_load = True
@@ -423,7 +458,8 @@ class SessionManager(QObject):
 
     @cmdutils.register(instance='session-manager')
     @cmdutils.argument('name', completion=miscmodels.session)
-    def session_load(self, name, clear=False, temp=False, force=False):
+    def session_load(self, name, clear=False, temp=False, force=False,
+                     delete=False):
         """Load a session.
 
         Args:
@@ -432,6 +468,7 @@ class SessionManager(QObject):
             temp: Don't set the current session for :session-save.
             force: Force loading internal sessions (starting with an
                    underline).
+            delete: Delete the saved session once it has loaded.
         """
         if name.startswith('_') and not force:
             raise cmdexc.CommandError("{} is an internal session, use --force "
@@ -448,6 +485,17 @@ class SessionManager(QObject):
             if clear:
                 for win in old_windows:
                     win.close()
+            if delete:
+                try:
+                    self.delete(name)
+                except SessionError as e:
+                    log.sessions.exception("Error while deleting session!")
+                    raise cmdexc.CommandError(
+                        "Error while deleting session: {}"
+                        .format(e))
+                else:
+                    log.sessions.debug(
+                        "Loaded & deleted session {}.".format(name))
 
     @cmdutils.register(instance='session-manager')
     @cmdutils.argument('name', completion=miscmodels.session)
@@ -460,7 +508,7 @@ class SessionManager(QObject):
 
         Args:
             name: The name of the session. If not given, the session configured
-                  in session_default_name is saved.
+                  in session.default_name is saved.
             current: Save the current session instead of the default.
             quiet: Don't show confirmation message.
             force: Force saving internal sessions (starting with an underline).
@@ -485,7 +533,9 @@ class SessionManager(QObject):
             raise cmdexc.CommandError("Error while saving session: {}"
                                       .format(e))
         else:
-            if not quiet:
+            if quiet:
+                log.sessions.debug("Saved session {}.".format(name))
+            else:
                 message.info("Saved session {}.".format(name))
 
     @cmdutils.register(instance='session-manager')

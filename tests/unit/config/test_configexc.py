@@ -1,5 +1,5 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 
 # This file is part of qutebrowser.
 #
@@ -48,9 +48,22 @@ def test_no_option_error_clash():
         configexc.NoOptionError('opt', deleted=True, renamed='foo')
 
 
+def test_no_autoconfig_error():
+    e = configexc.NoAutoconfigError('opt')
+    expected = "The opt setting can only be set in config.py!"
+    assert str(e) == expected
+
+
 def test_backend_error():
-    e = configexc.BackendError(usertypes.Backend.QtWebKit)
-    assert str(e) == "This setting is not available with the QtWebKit backend!"
+    e = configexc.BackendError('foo', usertypes.Backend.QtWebKit)
+    expected = "The foo setting is not available with the QtWebKit backend!"
+    assert str(e) == expected
+
+
+def test_no_pattern_error():
+    e = configexc.NoPatternError('foo')
+    expected = "The foo setting does not support URL patterns!"
+    assert str(e) == expected
 
 
 def test_desc_with_text():
@@ -73,7 +86,7 @@ def test_config_file_errors_str(errors):
     assert str(errors).splitlines() == [
         'Errors occurred while reading config.py:',
         '  Error text 1: Exception 1',
-        '  Error text 2: Exception 2',
+        '  Error text 2 - Exception: Exception 2',
     ]
 
 

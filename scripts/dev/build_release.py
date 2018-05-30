@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -22,9 +22,10 @@
 
 
 import os
-import sys
-import glob
 import os.path
+import sys
+import time
+import glob
 import shutil
 import plistlib
 import subprocess
@@ -50,7 +51,7 @@ def call_script(name, *args, python=sys.executable):
         python: The python interpreter to use.
     """
     path = os.path.join(os.path.dirname(__file__), os.pardir, name)
-    subprocess.check_call([python, path] + list(args))
+    subprocess.run([python, path] + list(args), check=True)
 
 
 def call_tox(toxenv, *args, python=sys.executable):
@@ -64,9 +65,9 @@ def call_tox(toxenv, *args, python=sys.executable):
     env = os.environ.copy()
     env['PYTHON'] = python
     env['PATH'] = os.environ['PATH'] + os.pathsep + os.path.dirname(python)
-    subprocess.check_call(
+    subprocess.run(
         [sys.executable, '-m', 'tox', '-vv', '-e', toxenv] + list(args),
-        env=env)
+        env=env, check=True)
 
 
 def run_asciidoc2html(args):
@@ -89,8 +90,9 @@ def _maybe_remove(path):
 
 def smoke_test(executable):
     """Try starting the given qutebrowser executable."""
-    subprocess.check_call([executable, '--no-err-windows', '--nowindow',
-                           '--temp-basedir', 'about:blank', ':later 500 quit'])
+    subprocess.run([executable, '--no-err-windows', '--nowindow',
+                    '--temp-basedir', 'about:blank', ':later 500 quit'],
+                   check=True)
 
 
 def patch_mac_app():
@@ -178,7 +180,7 @@ def build_mac():
     utils.print_title("Patching .app")
     patch_mac_app()
     utils.print_title("Building .dmg")
-    subprocess.check_call(['make', '-f', 'scripts/dev/Makefile-dmg'])
+    subprocess.run(['make', '-f', 'scripts/dev/Makefile-dmg'], check=True)
 
     dmg_name = 'qutebrowser-{}.dmg'.format(qutebrowser.__version__)
     os.rename('qutebrowser.dmg', dmg_name)
@@ -187,14 +189,15 @@ def build_mac():
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.check_call(['hdiutil', 'attach', dmg_name,
-                                   '-mountpoint', tmpdir])
+            subprocess.run(['hdiutil', 'attach', dmg_name,
+                            '-mountpoint', tmpdir], check=True)
             try:
                 binary = os.path.join(tmpdir, 'qutebrowser.app', 'Contents',
                                       'MacOS', 'qutebrowser')
                 smoke_test(binary)
             finally:
-                subprocess.call(['hdiutil', 'detach', tmpdir])
+                time.sleep(5)
+                subprocess.run(['hdiutil', 'detach', tmpdir])
     except PermissionError as e:
         print("Failed to remove tempdir: {}".format(e))
 
@@ -242,13 +245,13 @@ def build_windows():
     patch_windows(out_64)
 
     utils.print_title("Building installers")
-    subprocess.check_call(['makensis.exe',
-                           '/DVERSION={}'.format(qutebrowser.__version__),
-                           'misc/qutebrowser.nsi'])
-    subprocess.check_call(['makensis.exe',
-                           '/DX64',
-                           '/DVERSION={}'.format(qutebrowser.__version__),
-                           'misc/qutebrowser.nsi'])
+    subprocess.run(['makensis.exe',
+                    '/DVERSION={}'.format(qutebrowser.__version__),
+                    'misc/qutebrowser.nsi'], check=True)
+    subprocess.run(['makensis.exe',
+                    '/DX64',
+                    '/DVERSION={}'.format(qutebrowser.__version__),
+                    'misc/qutebrowser.nsi'], check=True)
 
     name_32 = 'qutebrowser-{}-win32.exe'.format(qutebrowser.__version__)
     name_64 = 'qutebrowser-{}-amd64.exe'.format(qutebrowser.__version__)
@@ -292,12 +295,12 @@ def build_sdist():
 
     _maybe_remove('dist')
 
-    subprocess.check_call([sys.executable, 'setup.py', 'sdist'])
+    subprocess.run([sys.executable, 'setup.py', 'sdist'], check=True)
     dist_files = os.listdir(os.path.abspath('dist'))
     assert len(dist_files) == 1
 
     dist_file = os.path.join('dist', dist_files[0])
-    subprocess.check_call(['gpg', '--detach-sign', '-a', dist_file])
+    subprocess.run(['gpg', '--detach-sign', '-a', dist_file], check=True)
 
     tar = tarfile.open(dist_file)
     by_ext = collections.defaultdict(list)
@@ -327,6 +330,14 @@ def build_sdist():
     return artifacts
 
 
+def test_makefile():
+    """Make sure the Makefile works correctly."""
+    utils.print_title("Testing makefile")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        subprocess.run(['make', '-f', 'misc/Makefile',
+                        'DESTDIR={}'.format(tmpdir), 'install'], check=True)
+
+
 def read_github_token():
     """Read the GitHub API token from disk."""
     token_file = os.path.join(os.path.expanduser('~'), '.gh_token')
@@ -350,7 +361,7 @@ def github_upload(artifacts, tag):
     repo = gh.repository('qutebrowser', 'qutebrowser')
 
     release = None  # to satisfy pylint
-    for release in repo.iter_releases():
+    for release in repo.releases():
         if release.tag_name == tag:
             break
     else:
@@ -366,7 +377,7 @@ def github_upload(artifacts, tag):
 def pypi_upload(artifacts):
     """Upload the given artifacts to PyPI using twine."""
     filenames = [a[0] for a in artifacts]
-    subprocess.check_call(['twine', 'upload'] + filenames)
+    subprocess.run(['twine', 'upload'] + filenames, check=True)
 
 
 def main():
@@ -390,18 +401,11 @@ def main():
 
     run_asciidoc2html(args)
     if os.name == 'nt':
-        if sys.maxsize > 2**32:
-            # WORKAROUND
-            print("Due to a python/Windows bug, this script needs to be run ")
-            print("with a 32bit Python.")
-            print()
-            print("See http://bugs.python.org/issue24493 and ")
-            print("https://github.com/pypa/virtualenv/issues/774")
-            sys.exit(1)
         artifacts = build_windows()
     elif sys.platform == 'darwin':
         artifacts = build_mac()
     else:
+        test_makefile()
         artifacts = build_sdist()
         upload_to_pypi = True
 

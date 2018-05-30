@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
+# Copyright 2016-2018 Ryan Roden-Corrent (rcorre) <ryan@rcorre.net>
 #
 # This file is part of qutebrowser.
 #
@@ -28,7 +28,7 @@ from PyQt5.QtCore import QUrl
 from qutebrowser.completion import completer
 from qutebrowser.completion.models import miscmodels, urlmodel, configmodel
 from qutebrowser.config import configdata, configtypes
-from qutebrowser.utils import objreg
+from qutebrowser.utils import objreg, usertypes
 from qutebrowser.browser import history
 from qutebrowser.commands import cmdutils
 
@@ -44,6 +44,7 @@ def _check_completions(model, expected):
                 ...
             }
     """
+    __tracebackhide__ = True
     actual = {}
     assert model.rowCount() == len(expected)
     for i in range(0, model.rowCount()):
@@ -68,16 +69,20 @@ def cmdutils_stub(monkeypatch, stubs):
         'quit': stubs.FakeCommand(name='quit', desc='quit qutebrowser'),
         'open': stubs.FakeCommand(name='open', desc='open a url'),
         'prompt-yes': stubs.FakeCommand(name='prompt-yes', deprecated=True),
-        'scroll': stubs.FakeCommand(name='scroll',
+        'scroll': stubs.FakeCommand(
+            name='scroll',
             desc='Scroll the current tab in the given direction.',
-            hide=True),
+            modes=()),
+        'tab-close': stubs.FakeCommand(
+            name='tab-close',
+            desc='Close the current tab.'),
     })
 
 
 @pytest.fixture()
-def configdata_stub(monkeypatch, configdata_init):
+def configdata_stub(config_stub, monkeypatch, configdata_init):
     """Patch the configdata module to provide fake data."""
-    return monkeypatch.setattr(configdata, 'DATA', collections.OrderedDict([
+    monkeypatch.setattr(configdata, 'DATA', collections.OrderedDict([
         ('aliases', configdata.Option(
             name='aliases',
             description='Aliases for commands.',
@@ -86,7 +91,8 @@ def configdata_stub(monkeypatch, configdata_init):
                 valtype=configtypes.Command(),
             ),
             default={'q': 'quit'},
-            backends=[],
+            backends=[usertypes.Backend.QtWebKit,
+                      usertypes.Backend.QtWebEngine],
             raw_backends=None)),
         ('bindings.default', configdata.Option(
             name='bindings.default',
@@ -94,37 +100,48 @@ def configdata_stub(monkeypatch, configdata_init):
             typ=configtypes.Dict(
                 keytype=configtypes.String(),
                 valtype=configtypes.Dict(
-                    keytype=configtypes.String(),
+                    keytype=configtypes.Key(),
                     valtype=configtypes.Command(),
                 ),
             ),
             default={
-                'normal': {
-                    '<ctrl+q>': 'quit'
-                }
+                'normal': collections.OrderedDict([
+                    ('<Ctrl+q>', 'quit'),
+                    ('d', 'tab-close'),
+                ])
             },
             backends=[],
-            raw_backends=None)),
+            raw_backends=None,
+            no_autoconfig=True)),
         ('bindings.commands', configdata.Option(
             name='bindings.commands',
             description='Default keybindings',
             typ=configtypes.Dict(
                 keytype=configtypes.String(),
                 valtype=configtypes.Dict(
-                    keytype=configtypes.String(),
+                    keytype=configtypes.Key(),
                     valtype=configtypes.Command(),
                 ),
             ),
             default={
                 'normal': collections.OrderedDict([
-                    ('<ctrl+q>', 'quit'),
+                    ('<Ctrl+q>', 'quit'),
                     ('ZQ', 'quit'),
                     ('I', 'invalid'),
+                    ('d', 'scroll down'),
                 ])
             },
             backends=[],
             raw_backends=None)),
+        ('content.javascript.enabled', configdata.Option(
+            name='content.javascript.enabled',
+            description='Enable/Disable JavaScript',
+            typ=configtypes.Bool(),
+            default=True,
+            backends=[],
+            raw_backends=None)),
     ]))
+    config_stub._init_values()
 
 
 @pytest.fixture
@@ -184,7 +201,8 @@ def web_history_populated(web_history):
 @pytest.fixture
 def info(config_stub, key_config_stub):
     return completer.CompletionInfo(config=config_stub,
-                                    keyconf=key_config_stub)
+                                    keyconf=key_config_stub,
+                                    win_id=0)
 
 
 def test_command_completion(qtmodeltester, cmdutils_stub, configdata_stub,
@@ -206,7 +224,8 @@ def test_command_completion(qtmodeltester, cmdutils_stub, configdata_stub,
         "Commands": [
             ('open', 'open a url', ''),
             ('q', "Alias for 'quit'", ''),
-            ('quit', 'quit qutebrowser', 'ZQ, <ctrl+q>'),
+            ('quit', 'quit qutebrowser', 'ZQ, <Ctrl+q>'),
+            ('tab-close', 'Close the current tab.', ''),
         ]
     })
 
@@ -230,13 +249,15 @@ def test_help_completion(qtmodeltester, cmdutils_stub, key_config_stub,
     _check_completions(model, {
         "Commands": [
             (':open', 'open a url', ''),
-            (':quit', 'quit qutebrowser', 'ZQ, <ctrl+q>'),
-            (':scroll', 'Scroll the current tab in the given direction.', '')
+            (':quit', 'quit qutebrowser', 'ZQ, <Ctrl+q>'),
+            (':scroll', 'Scroll the current tab in the given direction.', ''),
+            (':tab-close', 'Close the current tab.', ''),
         ],
         "Settings": [
             ('aliases', 'Aliases for commands.', None),
             ('bindings.commands', 'Default keybindings', None),
             ('bindings.default', 'Default keybindings', None),
+            ('content.javascript.enabled', 'Enable/Disable JavaScript', None),
         ]
     })
 
@@ -354,18 +375,62 @@ def test_url_completion(qtmodeltester, web_history_populated,
     })
 
 
+def test_url_completion_no_quickmarks(qtmodeltester, web_history_populated,
+                                      quickmark_manager_stub, bookmarks, info):
+    """Test that the quickmark category is gone with no quickmarks."""
+    model = urlmodel.url(info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        "Bookmarks": [
+            ('https://github.com', 'GitHub', None),
+            ('https://python.org', 'Welcome to Python.org', None),
+            ('http://qutebrowser.org', 'qutebrowser | qutebrowser', None),
+        ],
+        "History": [
+            ('https://github.com', 'https://github.com', '2016-05-01'),
+            ('https://python.org', 'Welcome to Python.org', '2016-03-08'),
+            ('http://qutebrowser.org', 'qutebrowser', '2015-09-05'),
+        ],
+    })
+
+
+def test_url_completion_no_bookmarks(qtmodeltester, web_history_populated,
+                                     quickmarks, bookmark_manager_stub, info):
+    """Test that the bookmarks category is gone with no bookmarks."""
+    model = urlmodel.url(info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        "Quickmarks": [
+            ('https://wiki.archlinux.org', 'aw', None),
+            ('https://wikipedia.org', 'wiki', None),
+            ('https://duckduckgo.com', 'ddg', None),
+        ],
+        "History": [
+            ('https://github.com', 'https://github.com', '2016-05-01'),
+            ('https://python.org', 'Welcome to Python.org', '2016-03-08'),
+            ('http://qutebrowser.org', 'qutebrowser', '2015-09-05'),
+        ],
+    })
+
+
 @pytest.mark.parametrize('url, title, pattern, rowcount', [
     ('example.com', 'Site Title', '', 1),
     ('example.com', 'Site Title', 'ex', 1),
     ('example.com', 'Site Title', 'am', 1),
     ('example.com', 'Site Title', 'com', 1),
     ('example.com', 'Site Title', 'ex com', 1),
-    ('example.com', 'Site Title', 'com ex', 0),
+    ('example.com', 'Site Title', 'com ex', 1),
     ('example.com', 'Site Title', 'ex foo', 0),
     ('example.com', 'Site Title', 'foo com', 0),
     ('example.com', 'Site Title', 'exm', 0),
     ('example.com', 'Site Title', 'Si Ti', 1),
-    ('example.com', 'Site Title', 'Ti Si', 0),
+    ('example.com', 'Site Title', 'Ti Si', 1),
     ('example.com', '', 'foo', 0),
     ('foo_bar', '', '_', 1),
     ('foobar', '', '_', 0),
@@ -380,7 +445,7 @@ def test_url_completion_pattern(web_history, quickmark_manager_stub,
     model = urlmodel.url(info=info)
     model.set_pattern(pattern)
     # 2, 0 is History
-    assert model.rowCount(model.index(2, 0)) == rowcount
+    assert model.rowCount(model.index(0, 0)) == rowcount
 
 
 def test_url_completion_delete_bookmark(qtmodeltester, bookmarks,
@@ -466,20 +531,20 @@ def test_session_completion(qtmodeltester, session_manager_stub):
     qtmodeltester.check(model)
 
     _check_completions(model, {
-        "Sessions": [('default', None, None),
-                     ('1', None, None),
-                     ('2', None, None)]
+        "Sessions": [('1', None, None),
+                     ('2', None, None),
+                     ('default', None, None)]
     })
 
 
 def test_tab_completion(qtmodeltester, fake_web_tab, app_stub, win_registry,
                         tabbed_browser_stubs):
-    tabbed_browser_stubs[0].tabs = [
+    tabbed_browser_stubs[0].widget.tabs = [
         fake_web_tab(QUrl('https://github.com'), 'GitHub', 0),
         fake_web_tab(QUrl('https://wikipedia.org'), 'Wikipedia', 1),
         fake_web_tab(QUrl('https://duckduckgo.com'), 'DuckDuckGo', 2),
     ]
-    tabbed_browser_stubs[1].tabs = [
+    tabbed_browser_stubs[1].widget.tabs = [
         fake_web_tab(QUrl('https://wiki.archlinux.org'), 'ArchWiki', 0),
     ]
     model = miscmodels.buffer()
@@ -502,12 +567,12 @@ def test_tab_completion(qtmodeltester, fake_web_tab, app_stub, win_registry,
 def test_tab_completion_delete(qtmodeltester, fake_web_tab, app_stub,
                                win_registry, tabbed_browser_stubs):
     """Verify closing a tab by deleting it from the completion widget."""
-    tabbed_browser_stubs[0].tabs = [
+    tabbed_browser_stubs[0].widget.tabs = [
         fake_web_tab(QUrl('https://github.com'), 'GitHub', 0),
         fake_web_tab(QUrl('https://wikipedia.org'), 'Wikipedia', 1),
         fake_web_tab(QUrl('https://duckduckgo.com'), 'DuckDuckGo', 2)
     ]
-    tabbed_browser_stubs[1].tabs = [
+    tabbed_browser_stubs[1].widget.tabs = [
         fake_web_tab(QUrl('https://wiki.archlinux.org'), 'ArchWiki', 0),
     ]
     model = miscmodels.buffer()
@@ -523,9 +588,82 @@ def test_tab_completion_delete(qtmodeltester, fake_web_tab, app_stub,
     assert model.data(idx) == '0/2'
 
     model.delete_cur_item(idx)
-    actual = [tab.url() for tab in tabbed_browser_stubs[0].tabs]
+    actual = [tab.url() for tab in tabbed_browser_stubs[0].widget.tabs]
     assert actual == [QUrl('https://github.com'),
                       QUrl('https://duckduckgo.com')]
+
+
+def test_other_buffer_completion(qtmodeltester, fake_web_tab, app_stub,
+                                 win_registry, tabbed_browser_stubs, info):
+    tabbed_browser_stubs[0].widget.tabs = [
+        fake_web_tab(QUrl('https://github.com'), 'GitHub', 0),
+        fake_web_tab(QUrl('https://wikipedia.org'), 'Wikipedia', 1),
+        fake_web_tab(QUrl('https://duckduckgo.com'), 'DuckDuckGo', 2),
+    ]
+    tabbed_browser_stubs[1].widget.tabs = [
+        fake_web_tab(QUrl('https://wiki.archlinux.org'), 'ArchWiki', 0),
+    ]
+    info.win_id = 1
+    model = miscmodels.other_buffer(info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        '0': [
+            ('0/1', 'https://github.com', 'GitHub'),
+            ('0/2', 'https://wikipedia.org', 'Wikipedia'),
+            ('0/3', 'https://duckduckgo.com', 'DuckDuckGo')
+        ],
+    })
+
+
+def test_other_buffer_completion_id0(qtmodeltester, fake_web_tab, app_stub,
+                                     win_registry, tabbed_browser_stubs, info):
+    tabbed_browser_stubs[0].widget.tabs = [
+        fake_web_tab(QUrl('https://github.com'), 'GitHub', 0),
+        fake_web_tab(QUrl('https://wikipedia.org'), 'Wikipedia', 1),
+        fake_web_tab(QUrl('https://duckduckgo.com'), 'DuckDuckGo', 2),
+    ]
+    tabbed_browser_stubs[1].widget.tabs = [
+        fake_web_tab(QUrl('https://wiki.archlinux.org'), 'ArchWiki', 0),
+    ]
+    info.win_id = 0
+    model = miscmodels.other_buffer(info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        '1': [
+            ('1/1', 'https://wiki.archlinux.org', 'ArchWiki'),
+        ],
+    })
+
+
+def test_window_completion(qtmodeltester, fake_web_tab, tabbed_browser_stubs,
+                           info):
+    tabbed_browser_stubs[0].widget.tabs = [
+        fake_web_tab(QUrl('https://github.com'), 'GitHub', 0),
+        fake_web_tab(QUrl('https://wikipedia.org'), 'Wikipedia', 1),
+        fake_web_tab(QUrl('https://duckduckgo.com'), 'DuckDuckGo', 2)
+    ]
+    tabbed_browser_stubs[1].widget.tabs = [
+        fake_web_tab(QUrl('https://wiki.archlinux.org'), 'ArchWiki', 0)
+    ]
+
+    info.win_id = 1
+    model = miscmodels.window(info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        'Windows': [
+            ('0', 'window title - qutebrowser',
+             'GitHub, Wikipedia, DuckDuckGo'),
+        ]
+    })
 
 
 def test_setting_option_completion(qtmodeltester, config_stub,
@@ -538,13 +676,105 @@ def test_setting_option_completion(qtmodeltester, config_stub,
     _check_completions(model, {
         "Options": [
             ('aliases', 'Aliases for commands.', '{"q": "quit"}'),
-            ('bindings.commands', 'Default keybindings',
-                '{"normal": {"<ctrl+q>": "quit", "ZQ": "quit", '
-                '"I": "invalid"}}'),
-            ('bindings.default', 'Default keybindings',
-                '{"normal": {"<ctrl+q>": "quit"}}'),
+            ('bindings.commands', 'Default keybindings', (
+                '{"normal": {"<Ctrl+q>": "quit", "ZQ": "quit", '
+                '"I": "invalid", "d": "scroll down"}}')),
+            ('content.javascript.enabled', 'Enable/Disable JavaScript',
+             'true'),
         ]
     })
+
+
+def test_setting_customized_option_completion(qtmodeltester, config_stub,
+                                              configdata_stub, info):
+    info.config.set_obj('aliases', {'foo': 'nop'})
+
+    model = configmodel.customized_option(info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        "Customized options": [
+            ('aliases', 'Aliases for commands.', '{"foo": "nop"}'),
+        ]
+    })
+
+
+def test_setting_value_completion(qtmodeltester, config_stub, configdata_stub,
+                                  info):
+    model = configmodel.value(optname='content.javascript.enabled', info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        "Current/Default": [
+            ('true', 'Current value', None),
+            ('true', 'Default value', None),
+        ],
+        "Completions": [
+            ('false', '', None),
+            ('true', '', None),
+        ],
+    })
+
+
+def test_setting_value_no_completions(qtmodeltester, config_stub,
+                                      configdata_stub, info):
+    model = configmodel.value(optname='aliases', info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+
+    _check_completions(model, {
+        "Current/Default": [
+            ('{"q": "quit"}', 'Current value', None),
+            ('{"q": "quit"}', 'Default value', None),
+        ],
+    })
+
+
+def test_setting_value_completion_invalid(info):
+    assert configmodel.value(optname='foobarbaz', info=info) is None
+
+
+@pytest.mark.parametrize('args, expected', [
+    ([], {
+        "Current/Default": [
+            ('true', 'Current value', None),
+            ('true', 'Default value', None),
+        ],
+        "Completions": [
+            ('false', '', None),
+            ('true', '', None),
+        ],
+    }),
+    (['false'], {
+        "Current/Default": [
+            ('true', 'Current value', None),
+            ('true', 'Default value', None),
+        ],
+        "Completions": [
+            ('true', '', None),
+        ],
+    }),
+    (['true'], {
+        "Completions": [
+            ('false', '', None),
+        ],
+    }),
+    (['false', 'true'], {}),
+])
+def test_setting_value_cycle(qtmodeltester, config_stub, configdata_stub,
+                             info, args, expected):
+    opt = 'content.javascript.enabled'
+
+    model = configmodel.value(opt, *args, info=info)
+    model.set_pattern('')
+    qtmodeltester.data_display_may_return_none = True
+    qtmodeltester.check(model)
+    _check_completions(model, expected)
 
 
 def test_bind_completion(qtmodeltester, cmdutils_stub, config_stub,
@@ -563,14 +793,15 @@ def test_bind_completion(qtmodeltester, cmdutils_stub, config_stub,
     qtmodeltester.check(model)
 
     _check_completions(model, {
-        "Current": [
-            ('quit', 'quit qutebrowser', 'ZQ'),
+        "Current/Default": [
+            ('quit', '(Current) quit qutebrowser', 'ZQ'),
         ],
         "Commands": [
             ('open', 'open a url', ''),
             ('q', "Alias for 'quit'", ''),
-            ('quit', 'quit qutebrowser', 'ZQ, <ctrl+q>'),
-            ('scroll', 'Scroll the current tab in the given direction.', '')
+            ('quit', 'quit qutebrowser', 'ZQ, <Ctrl+q>'),
+            ('scroll', 'Scroll the current tab in the given direction.', ''),
+            ('tab-close', 'Close the current tab.', ''),
         ],
     })
 
@@ -582,21 +813,43 @@ def test_bind_completion_invalid(cmdutils_stub, config_stub, key_config_stub,
     model.set_pattern('')
 
     _check_completions(model, {
-        "Current": [
-            ('invalid', 'Invalid command!', 'I'),
+        "Current/Default": [
+            ('invalid', '(Current) Invalid command!', 'I'),
         ],
         "Commands": [
             ('open', 'open a url', ''),
             ('q', "Alias for 'quit'", ''),
-            ('quit', 'quit qutebrowser', 'ZQ, <ctrl+q>'),
-            ('scroll', 'Scroll the current tab in the given direction.', '')
+            ('quit', 'quit qutebrowser', 'ZQ, <Ctrl+q>'),
+            ('scroll', 'Scroll the current tab in the given direction.', ''),
+            ('tab-close', 'Close the current tab.', ''),
         ],
     })
 
 
-def test_bind_completion_no_current(qtmodeltester, cmdutils_stub, config_stub,
+def test_bind_completion_invalid_binding(cmdutils_stub, config_stub,
+                                         key_config_stub, configdata_stub,
+                                         info):
+    """Test command completion with an invalid key binding."""
+    model = configmodel.bind('<blub>', info=info)
+    model.set_pattern('')
+
+    _check_completions(model, {
+        "Current/Default": [
+            ('', "Could not parse '<blub>': Got invalid key!", '<blub>'),
+        ],
+        "Commands": [
+            ('open', 'open a url', ''),
+            ('q', "Alias for 'quit'", ''),
+            ('quit', 'quit qutebrowser', 'ZQ, <Ctrl+q>'),
+            ('scroll', 'Scroll the current tab in the given direction.', ''),
+            ('tab-close', 'Close the current tab.', ''),
+        ],
+    })
+
+
+def test_bind_completion_no_binding(qtmodeltester, cmdutils_stub, config_stub,
                                     key_config_stub, configdata_stub, info):
-    """Test keybinding completion with no current binding."""
+    """Test keybinding completion with no current or default binding."""
     model = configmodel.bind('x', info=info)
     model.set_pattern('')
     qtmodeltester.data_display_may_return_none = True
@@ -606,8 +859,31 @@ def test_bind_completion_no_current(qtmodeltester, cmdutils_stub, config_stub,
         "Commands": [
             ('open', 'open a url', ''),
             ('q', "Alias for 'quit'", ''),
-            ('quit', 'quit qutebrowser', 'ZQ, <ctrl+q>'),
-            ('scroll', 'Scroll the current tab in the given direction.', '')
+            ('quit', 'quit qutebrowser', 'ZQ, <Ctrl+q>'),
+            ('scroll', 'Scroll the current tab in the given direction.', ''),
+            ('tab-close', 'Close the current tab.', ''),
+        ],
+    })
+
+
+def test_bind_completion_changed(cmdutils_stub, config_stub, key_config_stub,
+                                 configdata_stub, info):
+    """Test command completion with a non-default command bound."""
+    model = configmodel.bind('d', info=info)
+    model.set_pattern('')
+
+    _check_completions(model, {
+        "Current/Default": [
+            ('scroll down',
+             '(Current) Scroll the current tab in the given direction.', 'd'),
+            ('tab-close', '(Default) Close the current tab.', 'd'),
+        ],
+        "Commands": [
+            ('open', 'open a url', ''),
+            ('q', "Alias for 'quit'", ''),
+            ('quit', 'quit qutebrowser', 'ZQ, <Ctrl+q>'),
+            ('scroll', 'Scroll the current tab in the given direction.', ''),
+            ('tab-close', 'Close the current tab.', ''),
         ],
     })
 

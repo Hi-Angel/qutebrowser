@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -32,6 +32,7 @@ import time
 import signal
 import os
 import threading
+from http import HTTPStatus
 
 import cheroot.wsgi
 import flask
@@ -48,6 +49,7 @@ def root():
 
 
 @app.route('/data/<path:path>')
+@app.route('/data2/<path:path>')  # for per-URL settings
 def send_data(path):
     """Send a given data file to qutebrowser.
 
@@ -62,7 +64,7 @@ def send_data(path):
         data_dir = os.path.join(basedir, 'data')
     print(basedir)
     if os.path.isdir(os.path.join(data_dir, path)):
-        path = path + '/index.html'
+        path += '/index.html'
     return flask.send_from_directory(data_dir, path)
 
 
@@ -112,7 +114,7 @@ def redirect_n_times(n):
 def relative_redirect():
     """302 Redirect once."""
     response = app.make_response('')
-    response.status_code = 302
+    response.status_code = HTTPStatus.FOUND
     response.headers['Location'] = flask.url_for('root')
     return response
 
@@ -121,7 +123,7 @@ def relative_redirect():
 def absolute_redirect():
     """302 Redirect once."""
     response = app.make_response('')
-    response.status_code = 302
+    response.status_code = HTTPStatus.FOUND
     response.headers['Location'] = flask.url_for('root', _external=True)
     return response
 
@@ -133,7 +135,7 @@ def redirect_to():
     # werkzeug from "fixing" the URL. This endpoint should set the Location
     # header to the exact string supplied.
     response = app.make_response('')
-    response.status_code = 302
+    response.status_code = HTTPStatus.FOUND
     response.headers['Location'] = flask.request.args['url'].encode('utf-8')
     return response
 
@@ -149,7 +151,7 @@ def content_size():
     response = flask.Response(generate_bytes(), headers={
         "Content-Type": "application/octet-stream",
     })
-    response.status_code = 200
+    response.status_code = HTTPStatus.OK
     return response
 
 
@@ -163,7 +165,7 @@ def twenty_mb():
         "Content-Type": "application/octet-stream",
         "Content-Length": str(20 * 1024 * 1024),
     })
-    response.status_code = 200
+    response.status_code = HTTPStatus.OK
     return response
 
 
@@ -174,8 +176,16 @@ def internal_error_attachment():
         "Content-Type": "application/octet-stream",
         "Content-Disposition": 'inline; filename="attachment.jpg"',
     })
-    response.status_code = 500
+    response.status_code = HTTPStatus.INTERNAL_SERVER_ERROR
     return response
+
+
+@app.route('/500')
+def internal_error():
+    """A normal 500 error."""
+    r = flask.make_response()
+    r.status_code = HTTPStatus.INTERNAL_SERVER_ERROR
+    return r
 
 
 @app.route('/cookies')
@@ -199,7 +209,7 @@ def basic_auth(user='user', passwd='passwd'):
     auth = flask.request.authorization
     if not auth or auth.username != user or auth.password != passwd:
         r = flask.make_response()
-        r.status_code = 401
+        r.status_code = HTTPStatus.UNAUTHORIZED
         r.headers = {'WWW-Authenticate': 'Basic realm="Fake Realm"'}
         return r
 
@@ -215,21 +225,21 @@ def drip():
 
     def generate_bytes():
         for _ in range(numbytes):
-            yield u"*".encode('utf-8')
+            yield "*".encode('utf-8')
             time.sleep(pause)
 
     response = flask.Response(generate_bytes(), headers={
         "Content-Type": "application/octet-stream",
         "Content-Length": str(numbytes),
     })
-    response.status_code = 200
+    response.status_code = HTTPStatus.OK
     return response
 
 
 @app.route('/404')
 def status_404():
     r = flask.make_response()
-    r.status_code = 404
+    r.status_code = HTTPStatus.NOT_FOUND
     return r
 
 

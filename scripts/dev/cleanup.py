@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -61,7 +61,7 @@ def main():
 
     for root, _dirs, _files in os.walk(os.getcwd()):
         path = os.path.basename(root)
-        if any([fnmatch.fnmatch(path, e) for e in recursive_lint]):
+        if any(fnmatch.fnmatch(path, e) for e in recursive_lint):
             remove(root)
 
 

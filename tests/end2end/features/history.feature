@@ -5,8 +5,7 @@ Feature: Page history
     Make sure the global page history is saved correctly.
 
     Background:
-        Given I open about:blank
-        And I run :history-clear --force
+        Given I run :history-clear --force
 
     Scenario: Simple history saving
         When I open data/numbers/1.txt
@@ -32,6 +31,7 @@ Feature: Page history
         Then the history should contain:
             http://localhost:(port)/data/title%20with%20spaces.html Test title
 
+    @unicode_locale
     Scenario: History item with umlauts
         When I open data/äöü.html
         Then the history should contain:
@@ -69,12 +69,15 @@ Feature: Page history
     Scenario: History with view-source URL
         When I open data/title.html
         And I run :view-source
-        And I wait for "Changing title for idx * to 'Source for http://localhost:*/data/title.html'" in the log
+        And I wait for regex "Changing title for idx \d+ to 'view-source:(http://)?localhost:\d+/data/title.html'" in the log
         Then the history should contain:
             http://localhost:(port)/data/title.html Test title
 
+    # Hangs a lot on AppVeyor
+    @posix
     Scenario: Clearing history
-        When I open data/title.html
+        When I run :tab-only
+        And I open data/title.html
         And I run :history-clear --force
         Then the history should be empty
 
@@ -99,6 +102,8 @@ Feature: Page history
         Then the page should contain the plaintext "3.txt"
         Then the page should contain the plaintext "4.txt"
 
+    # Hangs a lot on AppVeyor
+    @posix
     Scenario: Listing history with qute:history redirect
         When I open data/numbers/3.txt
         And I open data/numbers/4.txt

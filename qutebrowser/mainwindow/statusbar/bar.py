@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -19,6 +19,7 @@
 
 """The main statusbar widget."""
 
+import enum
 import attr
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, pyqtProperty, Qt, QSize, QTimer
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QStackedLayout, QSizePolicy
@@ -43,14 +44,16 @@ class ColorFlags:
         command: If we're currently in command mode.
         mode: The current caret mode (CaretMode.off/.on/.selection).
         private: Whether this window is in private browsing mode.
+        passthrough: If we're currently in passthrough-mode.
     """
 
-    CaretMode = usertypes.enum('CaretMode', ['off', 'on', 'selection'])
+    CaretMode = enum.Enum('CaretMode', ['off', 'on', 'selection'])
     prompt = attr.ib(False)
     insert = attr.ib(False)
     command = attr.ib(False)
     caret = attr.ib(CaretMode.off)
     private = attr.ib(False)
+    passthrough = attr.ib(False)
 
     def to_stringlist(self):
         """Get a string list of set flags used in the stylesheet.
@@ -66,6 +69,8 @@ class ColorFlags:
             strings.append('command')
         if self.private:
             strings.append('private')
+        if self.passthrough:
+            strings.append('passthrough')
 
         if self.private and self.command:
             strings.append('private-command')
@@ -88,6 +93,7 @@ def _generate_stylesheet():
         ('prompt', 'prompts'),
         ('insert', 'statusbar.insert'),
         ('command', 'statusbar.command'),
+        ('passthrough', 'statusbar.passthrough'),
         ('private-command', 'statusbar.command.private'),
     ]
     stylesheet = """
@@ -107,7 +113,7 @@ def _generate_stylesheet():
                 color: {{ conf.colors.%s }};
                 background-color: {{ conf.colors.%s }};
             }
-        """ % (flag, flag, flag,  # flake8: disable=S001
+        """ % (flag, flag, flag,  # noqa: S001
                option + '.fg', option + '.bg')
     return stylesheet
 
@@ -176,26 +182,13 @@ class StatusBar(QWidget):
         self.cmd.hide_cmd.connect(self._hide_cmd_widget)
         self._hide_cmd_widget()
 
-        self.keystring = keystring.KeyString()
-        self._hbox.addWidget(self.keystring)
-
         self.url = url.UrlText()
-        self._hbox.addWidget(self.url)
-
         self.percentage = percentage.Percentage()
-        self._hbox.addWidget(self.percentage)
-
         self.backforward = backforward.Backforward()
-        self._hbox.addWidget(self.backforward)
-
         self.tabindex = tabindex.TabIndex()
-        self._hbox.addWidget(self.tabindex)
-
-        # We add a parent to Progress here because it calls self.show() based
-        # on some signals, and if that happens before it's added to the layout,
-        # it will quickly blink up as independent window.
+        self.keystring = keystring.KeyString()
         self.prog = progress.Progress(self)
-        self._hbox.addWidget(self.prog)
+        self._draw_widgets()
 
         config.instance.changed.connect(self._on_config_changed)
         QTimer.singleShot(0, self.maybe_hide)
@@ -209,6 +202,48 @@ class StatusBar(QWidget):
             self.maybe_hide()
         elif option == 'statusbar.padding':
             self._set_hbox_padding()
+        elif option == 'statusbar.widgets':
+            self._draw_widgets()
+
+    def _draw_widgets(self):
+        """Draw statusbar widgets."""
+        # Start with widgets hidden and show them when needed
+        for widget in [self.url, self.percentage,
+                       self.backforward, self.tabindex,
+                       self.keystring, self.prog]:
+            widget.hide()
+            self._hbox.removeWidget(widget)
+
+        tab = self._current_tab()
+
+        # Read the list and set widgets accordingly
+        for segment in config.val.statusbar.widgets:
+            if segment == 'url':
+                self._hbox.addWidget(self.url)
+                self.url.show()
+            elif segment == 'scroll':
+                self._hbox.addWidget(self.percentage)
+                self.percentage.show()
+            elif segment == 'scroll_raw':
+                self._hbox.addWidget(self.percentage)
+                self.percentage.raw = True
+                self.percentage.show()
+            elif segment == 'history':
+                self._hbox.addWidget(self.backforward)
+                self.backforward.enabled = True
+                if tab:
+                    self.backforward.on_tab_changed(tab)
+            elif segment == 'tabs':
+                self._hbox.addWidget(self.tabindex)
+                self.tabindex.show()
+            elif segment == 'keypress':
+                self._hbox.addWidget(self.keystring)
+                self.keystring.show()
+            elif segment == 'progress':
+                self._hbox.addWidget(self.prog)
+                self.prog.enabled = True
+                if tab:
+                    self.prog.on_tab_changed(tab)
 
     @pyqtSlot()
     def maybe_hide(self):
@@ -233,7 +268,7 @@ class StatusBar(QWidget):
         """Get the currently displayed tab."""
         window = objreg.get('tabbed-browser', scope='window',
                             window=self._win_id)
-        return window.currentWidget()
+        return window.widget.currentWidget()
 
     def set_mode_active(self, mode, val):
         """Setter for self.{insert,command,caret}_active.
@@ -244,6 +279,9 @@ class StatusBar(QWidget):
         if mode == usertypes.KeyMode.insert:
             log.statusbar.debug("Setting insert flag to {}".format(val))
             self._color_flags.insert = val
+        if mode == usertypes.KeyMode.passthrough:
+            log.statusbar.debug("Setting passthrough flag to {}".format(val))
+            self._color_flags.passthrough = val
         if mode == usertypes.KeyMode.command:
             log.statusbar.debug("Setting command flag to {}".format(val))
             self._color_flags.command = val
@@ -251,17 +289,9 @@ class StatusBar(QWidget):
             log.statusbar.debug("Setting prompt flag to {}".format(val))
             self._color_flags.prompt = val
         elif mode == usertypes.KeyMode.caret:
-            tab = self._current_tab()
-            log.statusbar.debug("Setting caret flag - val {}, selection "
-                                "{}".format(val, tab.caret.selection_enabled))
-            if val:
-                if tab.caret.selection_enabled:
-                    self._set_mode_text("{} selection".format(mode.name))
-                    self._color_flags.caret = ColorFlags.CaretMode.selection
-                else:
-                    self._set_mode_text(mode.name)
-                    self._color_flags.caret = ColorFlags.CaretMode.on
-            else:
+            if not val:
+                # Turning on is handled in on_current_caret_selection_toggled
+                log.statusbar.debug("Setting caret mode off")
                 self._color_flags.caret = ColorFlags.CaretMode.off
         config.set_register_stylesheet(self, update=False)
 
@@ -307,7 +337,8 @@ class StatusBar(QWidget):
                     usertypes.KeyMode.command,
                     usertypes.KeyMode.caret,
                     usertypes.KeyMode.prompt,
-                    usertypes.KeyMode.yesno]:
+                    usertypes.KeyMode.yesno,
+                    usertypes.KeyMode.passthrough]:
             self.set_mode_active(mode, True)
 
     @pyqtSlot(usertypes.KeyMode, usertypes.KeyMode)
@@ -324,7 +355,8 @@ class StatusBar(QWidget):
                         usertypes.KeyMode.command,
                         usertypes.KeyMode.caret,
                         usertypes.KeyMode.prompt,
-                        usertypes.KeyMode.yesno]:
+                        usertypes.KeyMode.yesno,
+                        usertypes.KeyMode.passthrough]:
             self.set_mode_active(old_mode, False)
 
     @pyqtSlot(browsertab.AbstractTab)
@@ -336,6 +368,18 @@ class StatusBar(QWidget):
         self.backforward.on_tab_changed(tab)
         self.maybe_hide()
         assert tab.private == self._color_flags.private
+
+    @pyqtSlot(bool)
+    def on_caret_selection_toggled(self, selection):
+        """Update the statusbar when entering/leaving caret selection mode."""
+        log.statusbar.debug("Setting caret selection {}".format(selection))
+        if selection:
+            self._set_mode_text("caret selection")
+            self._color_flags.caret = ColorFlags.CaretMode.selection
+        else:
+            self._set_mode_text("caret")
+            self._color_flags.caret = ColorFlags.CaretMode.on
+        config.set_register_stylesheet(self, update=False)
 
     def resizeEvent(self, e):
         """Extend resizeEvent of QWidget to emit a resized signal afterwards.

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with qutebrowser.  If not, see <http://www.gnu.org/licenses/>.
 
+
 """Tests for qutebrowser.utils.qtutils."""
 
 import io
@@ -27,6 +28,7 @@ import unittest.mock
 try:
     # pylint: disable=no-name-in-module,useless-suppression
     from test import test_file
+    # pylint: enable=no-name-in-module,useless-suppression
 except ImportError:
     # Debian patches Python to remove the tests...
     test_file = None
@@ -39,6 +41,7 @@ from qutebrowser.utils import qtutils, utils
 import overflow_test_cases
 
 
+# pylint: disable=bad-continuation
 @pytest.mark.parametrize(['qversion', 'compiled', 'pyqt', 'version', 'exact',
                           'expected'], [
     # equal versions
@@ -60,6 +63,7 @@ import overflow_test_cases
     # all up-to-date
     ('5.4.0', '5.4.0', '5.4.0', '5.4.0', False, True),
 ])
+# pylint: enable=bad-continuation
 def test_version_check(monkeypatch, qversion, compiled, pyqt, version, exact,
                        expected):
     """Test for version_check().
@@ -701,6 +705,7 @@ class TestPyQIODevice:
             whence = os.SEEK_HOLE
         elif hasattr(os, 'SEEK_DATA'):
             whence = os.SEEK_DATA
+        # pylint: enable=no-member,useless-suppression
         else:
             pytest.skip("Needs os.SEEK_HOLE or os.SEEK_DATA available.")
         pyqiodev.open(QIODevice.ReadOnly)

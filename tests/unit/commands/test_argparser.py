@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -20,15 +20,15 @@
 """Tests for qutebrowser.commands.argparser."""
 
 import inspect
+import enum
 
 import pytest
 from PyQt5.QtCore import QUrl
 
 from qutebrowser.commands import argparser, cmdexc
-from qutebrowser.utils import usertypes
 
 
-Enum = usertypes.enum('Enum', ['foo', 'foo_bar'])
+Enum = enum.Enum('Enum', ['foo', 'foo_bar'])
 
 
 class TestArgumentParser:

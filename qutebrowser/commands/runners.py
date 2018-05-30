@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -63,9 +63,13 @@ def replace_variables(win_id, arglist):
             QUrl.FullyEncoded | QUrl.RemovePassword),
         'url:pretty': lambda: _current_url(tabbed_browser).toString(
             QUrl.DecodeReserved | QUrl.RemovePassword),
+        'url:host': lambda: _current_url(tabbed_browser).host(),
         'clipboard': utils.get_clipboard,
         'primary': lambda: utils.get_clipboard(selection=True),
     }
+    for key in list(variables):
+        modified_key = '{' + key + '}'
+        variables[modified_key] = lambda x=modified_key: x
     values = {}
     args = []
     tabbed_browser = objreg.get('tabbed-browser', scope='window',
@@ -95,7 +99,6 @@ class CommandParser:
     """Parse qutebrowser commandline commands.
 
     Attributes:
-
         _partial_match: Whether to allow partial command matches.
     """
 
@@ -127,7 +130,7 @@ class CommandParser:
             new_cmd += ' '
         return new_cmd
 
-    def _parse_all_gen(self, text, aliases=True, *args, **kwargs):
+    def _parse_all_gen(self, text, *args, aliases=True, **kwargs):
         """Split a command on ;; and parse all parts.
 
         If the first command in the commandline is a non-split one, it only
@@ -163,7 +166,7 @@ class CommandParser:
             yield self.parse(sub, *args, **kwargs)
 
     def parse_all(self, *args, **kwargs):
-        """Wrapper over parse_all."""
+        """Wrapper over _parse_all_gen."""
         return list(self._parse_all_gen(*args, **kwargs))
 
     def parse(self, text, *, fallback=False, keep=False):
@@ -214,11 +217,11 @@ class CommandParser:
         Return:
             cmdstr modified to the matching completion or unmodified
         """
-        matches = []
-        for valid_command in cmdutils.cmd_dict:
-            if valid_command.find(cmdstr) == 0:
-                matches.append(valid_command)
+        matches = [cmd for cmd in sorted(cmdutils.cmd_dict, key=len)
+                   if cmdstr in cmd]
         if len(matches) == 1:
+            cmdstr = matches[0]
+        elif len(matches) > 1 and config.val.completion.use_best_match:
             cmdstr = matches[0]
         return cmdstr
 

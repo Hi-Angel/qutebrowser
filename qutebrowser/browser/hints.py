@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -24,6 +24,7 @@ import functools
 import math
 import re
 import html
+import enum
 from string import ascii_lowercase
 
 import attr
@@ -37,10 +38,9 @@ from qutebrowser.commands import userscripts, cmdexc, cmdutils, runners
 from qutebrowser.utils import usertypes, log, qtutils, message, objreg, utils
 
 
-Target = usertypes.enum('Target', ['normal', 'current', 'tab', 'tab_fg',
-                                   'tab_bg', 'window', 'yank', 'yank_primary',
-                                   'run', 'fill', 'hover', 'download',
-                                   'userscript', 'spawn'])
+Target = enum.Enum('Target', ['normal', 'current', 'tab', 'tab_fg', 'tab_bg',
+                              'window', 'yank', 'yank_primary', 'run', 'fill',
+                              'hover', 'download', 'userscript', 'spawn'])
 
 
 class HintingError(Exception):
@@ -172,6 +172,7 @@ class HintContext:
     tab = attr.ib(None)
     group = attr.ib(None)
     hint_mode = attr.ib(None)
+    first = attr.ib(False)
 
     def get_args(self, urlstr):
         """Get the arguments, with {hint-url} replaced by the given URL."""
@@ -291,8 +292,7 @@ class HintActions:
         user_agent = context.tab.user_agent()
 
         # FIXME:qtwebengine do this with QtWebEngine downloads?
-        download_manager = objreg.get('qtnetwork-download-manager',
-                                      scope='window', window=self._win_id)
+        download_manager = objreg.get('qtnetwork-download-manager')
         download_manager.get(url, qnam=qnam, user_agent=user_agent,
                              prompt_download_directory=prompt)
 
@@ -390,7 +390,6 @@ class HintManager(QObject):
 
     def _cleanup(self):
         """Clean up after hinting."""
-        # pylint: disable=not-an-iterable
         for label in self._context.all_labels:
             label.cleanup()
 
@@ -445,8 +444,17 @@ class HintManager(QObject):
         # Short hints are the number of hints we can possibly show which are
         # (needed - 1) digits in length.
         if needed > min_chars:
-            short_count = math.floor((len(chars) ** needed - len(elems)) /
+            total_space = len(chars) ** needed
+            # Calculate short_count naively, by finding the avaiable space and
+            # dividing by the number of spots we would loose by adding a
+            # short element
+            short_count = math.floor((total_space - len(elems)) /
                                      len(chars))
+            # Check if we double counted above to warrant another short_count
+            # https://github.com/qutebrowser/qutebrowser/issues/3242
+            if total_space - (short_count * len(chars) +
+                              (len(elems) - short_count)) >= len(chars) - 1:
+                short_count += 1
         else:
             short_count = 0
 
@@ -605,22 +613,30 @@ class HintManager(QObject):
         modeman.enter(self._win_id, usertypes.KeyMode.hint,
                       'HintManager.start')
 
+        if self._context.first:
+            self._fire(strings[0])
+            return
         # to make auto_follow == 'always' work
         self._handle_auto_follow()
 
     @cmdutils.register(instance='hintmanager', scope='tab', name='hint',
                        star_args_optional=True, maxsplit=2)
     @cmdutils.argument('win_id', win_id=True)
-    def start(self, rapid=False, group=webelem.Group.all, target=Target.normal,
-              *args, win_id, mode=None, add_history=False):
+    def start(self,  # pylint: disable=keyword-arg-before-vararg
+              group=webelem.Group.all, target=Target.normal,
+              *args, win_id, mode=None, add_history=False, rapid=False,
+              first=False):
         """Start hinting.
 
         Args:
-            rapid: Whether to do rapid hinting. This is only possible with
-                   targets `tab` (with `tabs.background_tabs=true`), `tab-bg`,
+            rapid: Whether to do rapid hinting. With rapid hinting, the hint
+                   mode isn't left after a hint is followed, so you can easily
+                   open multiple links. This is only possible with targets
+                   `tab` (with `tabs.background_tabs=true`), `tab-bg`,
                    `window`, `run`, `hover`, `userscript` and `spawn`.
             add_history: Whether to add the spawned or yanked link to the
                          browsing history.
+            first: Click the first hinted element without prompting.
             group: The element types to hint.
 
                 - `all`: All clickable elements.
@@ -672,7 +688,7 @@ class HintManager(QObject):
         """
         tabbed_browser = objreg.get('tabbed-browser', scope='window',
                                     window=self._win_id)
-        tab = tabbed_browser.currentWidget()
+        tab = tabbed_browser.widget.currentWidget()
         if tab is None:
             raise cmdexc.CommandError("No WebView available yet!")
 
@@ -703,6 +719,7 @@ class HintManager(QObject):
         self._context.rapid = rapid
         self._context.hint_mode = mode
         self._context.add_history = add_history
+        self._context.first = first
         try:
             self._context.baseurl = tabbed_browser.current_url()
         except qtutils.QtValueError:
@@ -797,7 +814,6 @@ class HintManager(QObject):
         log.hints.debug("Filtering hints on {!r}".format(filterstr))
 
         visible = []
-        # pylint: disable=not-an-iterable
         for label in self._context.all_labels:
             try:
                 if self._filter_matches(filterstr, str(label.elem)):
@@ -898,22 +914,29 @@ class HintManager(QObject):
         except HintingError as e:
             message.error(str(e))
 
-    @cmdutils.register(instance='hintmanager', scope='tab', hide=True,
+    @cmdutils.register(instance='hintmanager', scope='tab',
                        modes=[usertypes.KeyMode.hint])
-    def follow_hint(self, keystring=None):
+    def follow_hint(self, select=False, keystring=None):
         """Follow a hint.
 
         Args:
+            select: Only select the given hint, don't necessarily follow it.
             keystring: The hint to follow, or None.
         """
         if keystring is None:
             if self._context.to_follow is None:
                 raise cmdexc.CommandError("No hint to follow")
+            elif select:
+                raise cmdexc.CommandError("Can't use --select without hint.")
             else:
                 keystring = self._context.to_follow
         elif keystring not in self._context.labels:
             raise cmdexc.CommandError("No hint {}!".format(keystring))
-        self._fire(keystring)
+
+        if select:
+            self.handle_partial_key(keystring)
+        else:
+            self._fire(keystring)
 
     @pyqtSlot(usertypes.KeyMode)
     def on_mode_left(self, mode):

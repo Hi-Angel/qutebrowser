@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -61,7 +61,7 @@ def check_exclusive(flags, names):
             argstr))
 
 
-class register:  # pylint: disable=invalid-name
+class register:  # noqa: N801,N806 pylint: disable=invalid-name
 
     """Decorator to register a new command handler.
 
@@ -105,7 +105,8 @@ class register:  # pylint: disable=invalid-name
         else:
             assert isinstance(self._name, str), self._name
             name = self._name
-        log.commands.vdebug("Registering command {}".format(name))
+        log.commands.vdebug("Registering command {} (from {}:{})".format(
+            name, func.__module__, func.__qualname__))
         if name in cmd_dict:
             raise ValueError("{} is already registered!".format(name))
         cmd = command.Command(name=name, instance=self._instance,
@@ -114,7 +115,7 @@ class register:  # pylint: disable=invalid-name
         return func
 
 
-class argument:  # pylint: disable=invalid-name
+class argument:  # noqa: N801,N806 pylint: disable=invalid-name
 
     """Decorator to customize an argument for @cmdutils.register.
 

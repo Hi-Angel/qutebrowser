@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -24,6 +24,7 @@ Module attributes:
     SELECTORS: CSS selectors for different groups of elements.
 """
 
+import enum
 import collections.abc
 
 from PyQt5.QtCore import QUrl, Qt, QEvent, QTimer
@@ -35,13 +36,15 @@ from qutebrowser.mainwindow import mainwindow
 from qutebrowser.utils import log, usertypes, utils, qtutils, objreg
 
 
-Group = usertypes.enum('Group', ['all', 'links', 'images', 'url', 'inputs'])
+Group = enum.Enum('Group', ['all', 'links', 'images', 'url', 'inputs'])
 
 
 SELECTORS = {
     Group.all: ('a, area, textarea, select, input:not([type=hidden]), button, '
-                'frame, iframe, link, [onclick], [onmousedown], [role=link], '
-                '[role=option], [role=button], img'),
+                'frame, iframe, link, summary, [onclick], [onmousedown], '
+                '[role=link], [role=option], [role=button], img, '
+                # Angular 1 selectors
+                '[ng-click], [ngClick], [data-ng-click], [x-ng-click]'),
     Group.links: 'a[href], area[href], link[href], [role=link][href]',
     Group.images: 'img',
     Group.url: '[src], [href]',
@@ -55,6 +58,13 @@ SELECTORS = {
 class Error(Exception):
 
     """Base class for WebElement errors."""
+
+    pass
+
+
+class OrphanedError(Error):
+
+    """Raised when a webelement's parent has vanished."""
 
     pass
 
@@ -220,7 +230,7 @@ class AbstractWebElement(collections.abc.MutableMapping):
         }
         relevant_classes = classes[self.tag_name()]
         for klass in self.classes():
-            if any([klass.strip().startswith(e) for e in relevant_classes]):
+            if any(klass.strip().startswith(e) for e in relevant_classes):
                 return True
         return False
 
@@ -401,8 +411,9 @@ class AbstractWebElement(collections.abc.MutableMapping):
             elif self.is_editable(strict=True):
                 log.webelem.debug("Clicking via JS focus()")
                 self._click_editable(click_target)
-                modeman.enter(self._tab.win_id, usertypes.KeyMode.insert,
-                              'clicking input')
+                if config.val.input.insert_mode.auto_enter:
+                    modeman.enter(self._tab.win_id, usertypes.KeyMode.insert,
+                                  'clicking input')
             else:
                 self._click_fake_event(click_target)
         elif click_target in [usertypes.ClickTarget.tab,

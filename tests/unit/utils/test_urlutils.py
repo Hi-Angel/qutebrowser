@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -245,13 +245,25 @@ class TestFuzzyUrl:
         ('/foo', False),
         ('/bar', True),
     ])
-    def test_get_path_existing(self, path, check_exists, os_mock):
+    def test_get_path_existing(self, path, check_exists, os_mock, caplog):
         """Test with an absolute path."""
         os_mock.path.exists.return_value = False
         expected = None if check_exists else path
 
         url = urlutils.get_path_if_valid(path, check_exists=check_exists)
         assert url == expected
+
+    def test_get_path_unicode_encode_error(self, os_mock, caplog):
+        """Make sure LC_ALL=C is handled correctly."""
+        err = UnicodeEncodeError('ascii', '', 0, 2, 'foo')
+        os_mock.path.exists.side_effect = err
+
+        url = urlutils.get_path_if_valid('/', check_exists=True)
+        assert url is None
+
+        msg = ("URL contains characters which are not present in the current "
+               "locale")
+        assert caplog.records[-1].message == msg
 
 
 @pytest.mark.parametrize('url, special', [
@@ -266,6 +278,7 @@ def test_special_urls(url, special):
     assert urlutils.is_special_url(QUrl(url)) == special
 
 
+@pytest.mark.parametrize('open_base_url', [True, False])
 @pytest.mark.parametrize('url, host, query', [
     ('testfoo', 'www.example.com', 'q=testfoo'),
     ('test testfoo', 'www.qutebrowser.org', 'q=testfoo'),
@@ -276,7 +289,7 @@ def test_special_urls(url, special):
     ('stripped ', 'www.example.com', 'q=stripped'),
     ('test-with-dash testfoo', 'www.example.org', 'q=testfoo'),
 ])
-def test_get_search_url(url, host, query):
+def test_get_search_url(config_stub, url, host, query, open_base_url):
     """Test _get_search_url().
 
     Args:
@@ -284,9 +297,30 @@ def test_get_search_url(url, host, query):
         host: The expected search machine host.
         query: The expected search query.
     """
+    config_stub.val.url.open_base_url = open_base_url
     url = urlutils._get_search_url(url)
     assert url.host() == host
     assert url.query() == query
+
+
+@pytest.mark.parametrize('url, host', [
+    ('test', 'www.qutebrowser.org'),
+    ('test-with-dash', 'www.example.org'),
+])
+def test_get_search_url_open_base_url(config_stub, url, host):
+    """Test _get_search_url() with url.open_base_url_enabled.
+
+    Args:
+        url: The "URL" to enter.
+        host: The expected search machine host.
+        query: The expected search query.
+    """
+    config_stub.val.url.open_base_url = True
+    url = urlutils._get_search_url(url)
+    assert not url.path()
+    assert not url.fragment()
+    assert not url.query()
+    assert url.host() == host
 
 
 @pytest.mark.parametrize('url', ['\n', ' ', '\n '])
@@ -480,18 +514,14 @@ def test_filename_from_url(qurl, output):
     (QUrl('qute://'), None),
     (QUrl('qute://foobar'), None),
     (QUrl('mailto:nobody'), None),
-    (QUrl('ftp://example.com/'),
-        ('ftp', 'example.com', 21)),
-    (QUrl('ftp://example.com:2121/'),
-        ('ftp', 'example.com', 2121)),
+    (QUrl('ftp://example.com/'), ('ftp', 'example.com', 21)),
+    (QUrl('ftp://example.com:2121/'), ('ftp', 'example.com', 2121)),
     (QUrl('http://qutebrowser.org:8010/waterfall'),
-        ('http', 'qutebrowser.org', 8010)),
-    (QUrl('https://example.com/'),
-        ('https', 'example.com', 443)),
-    (QUrl('https://example.com:4343/'),
-        ('https', 'example.com', 4343)),
+     ('http', 'qutebrowser.org', 8010)),
+    (QUrl('https://example.com/'), ('https', 'example.com', 443)),
+    (QUrl('https://example.com:4343/'), ('https', 'example.com', 4343)),
     (QUrl('http://user:password@qutebrowser.org/foo?bar=baz#fish'),
-        ('http', 'qutebrowser.org', 80)),
+     ('http', 'qutebrowser.org', 80)),
 ])
 def test_host_tuple(qurl, tpl):
     """Test host_tuple().
@@ -613,6 +643,22 @@ class TestIncDecNumber:
         new_url = urlutils.incdec_number(
             base_url, incdec, segments={'host', 'path', 'query', 'anchor'})
         assert new_url == expected_url
+
+    def test_incdec_port(self):
+        """Test incdec_number with port."""
+        base_url = QUrl('http://localhost:8000')
+        new_url = urlutils.incdec_number(
+            base_url, 'increment', segments={'port'})
+        assert new_url == QUrl('http://localhost:8001')
+        new_url = urlutils.incdec_number(
+            base_url, 'decrement', segments={'port'})
+        assert new_url == QUrl('http://localhost:7999')
+
+    def test_incdec_port_default(self):
+        """Test that a default port (with url.port() == -1) is not touched."""
+        base_url = QUrl('http://localhost')
+        with pytest.raises(urlutils.IncDecError):
+            urlutils.incdec_number(base_url, 'increment', segments={'port'})
 
     @pytest.mark.parametrize('incdec', ['increment', 'decrement'])
     @pytest.mark.parametrize('value', [
@@ -740,7 +786,7 @@ def test_data_url():
     (QUrl('http://www.example.com/ä'), 'http://www.example.com/ä'),
     # Unicode only in TLD (looks like Qt shows Punycode with рф...)
     (QUrl('http://www.example.xn--p1ai'),
-        '(www.example.xn--p1ai) http://www.example.рф'),
+     '(www.example.xn--p1ai) http://www.example.рф'),
     # https://bugreports.qt.io/browse/QTBUG-60364
     pytest.param(QUrl('http://www.xn--80ak6aa92e.com'),
                  '(unparseable URL!) http://www.аррӏе.com',
@@ -758,23 +804,28 @@ def test_safe_display_string_invalid():
         urlutils.safe_display_string(QUrl())
 
 
+def test_query_string():
+    url = QUrl('https://www.example.com/?foo=bar')
+    assert urlutils.query_string(url) == 'foo=bar'
+
+
 class TestProxyFromUrl:
 
     @pytest.mark.parametrize('url, expected', [
         ('socks://example.com/',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com')),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com')),
         ('socks5://example.com',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com')),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com')),
         ('socks5://example.com:2342',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 2342)),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 2342)),
         ('socks5://foo@example.com',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 0, 'foo')),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 0, 'foo')),
         ('socks5://foo:bar@example.com',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 0, 'foo',
-                          'bar')),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 0, 'foo',
+                       'bar')),
         ('socks5://foo:bar@example.com:2323',
-            QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 2323,
-                          'foo', 'bar')),
+         QNetworkProxy(QNetworkProxy.Socks5Proxy, 'example.com', 2323,
+                       'foo', 'bar')),
         ('direct://', QNetworkProxy(QNetworkProxy.NoProxy)),
     ])
     def test_proxy_from_url_valid(self, url, expected):

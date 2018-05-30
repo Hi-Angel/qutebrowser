@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 
 # This file is part of qutebrowser.
 #
@@ -66,6 +66,7 @@ class AsciiDoc:
             shutil.rmtree(self._homedir)
 
     def build(self):
+        """Build either the website or the docs."""
         if self._args.website:
             self._build_website()
         else:
@@ -84,11 +85,12 @@ class AsciiDoc:
 
         # patch image links to use local copy
         replacements = [
-            ("http://qutebrowser.org/img/cheatsheet-big.png",
-                "qute://help/img/cheatsheet-big.png"),
-            ("http://qutebrowser.org/img/cheatsheet-small.png",
-                "qute://help/img/cheatsheet-small.png")
+            ("https://raw.githubusercontent.com/qutebrowser/qutebrowser/master/doc/img/cheatsheet-big.png",
+             "qute://help/img/cheatsheet-big.png"),
+            ("https://raw.githubusercontent.com/qutebrowser/qutebrowser/master/doc/img/cheatsheet-small.png",
+             "qute://help/img/cheatsheet-small.png")
         ]
+        asciidoc_args = ['-a', 'source-highlighter=pygments']
 
         for src, dst in files:
             src_basename = os.path.basename(src)
@@ -99,7 +101,7 @@ class AsciiDoc:
                     for orig, repl in replacements:
                         line = line.replace(orig, repl)
                     modified_f.write(line)
-            self.call(modified_src, dst)
+            self.call(modified_src, dst, *asciidoc_args)
 
     def _copy_images(self):
         """Copy image files to qutebrowser/html/doc."""
@@ -116,7 +118,6 @@ class AsciiDoc:
 
     def _build_website_file(self, root, filename):
         """Build a single website file."""
-        # pylint: disable=too-many-locals,too-many-statements
         src = os.path.join(root, filename)
         src_basename = os.path.basename(src)
         parts = [self._args.website[0]]
@@ -146,32 +147,33 @@ class AsciiDoc:
             last_line = ""
 
             for line in infp:
-                if line.strip() == '// QUTE_WEB_HIDE':
+                line = line.rstrip()
+                if line == '// QUTE_WEB_HIDE':
                     assert not hidden
                     hidden = True
-                elif line.strip() == '// QUTE_WEB_HIDE_END':
+                elif line == '// QUTE_WEB_HIDE_END':
                     assert hidden
                     hidden = False
-                elif line == "The Compiler <mail@qutebrowser.org>\n":
+                elif line == "The Compiler <mail@qutebrowser.org>":
                     continue
-                elif re.match(r'^:\w+:.*', line):
+                elif re.fullmatch(r':\w+:.*', line):
                     # asciidoc field
                     continue
 
                 if not found_title:
-                    if re.match(r'^=+$', line):
+                    if re.fullmatch(r'=+', line):
                         line = line.replace('=', '-')
                         found_title = True
-                        title = last_line.rstrip('\n') + " | qutebrowser\n"
+                        title = last_line + " | qutebrowser\n"
                         title += "=" * (len(title) - 1)
-                    elif re.match(r'^= .+', line):
+                    elif re.fullmatch(r'= .+', line):
                         line = '==' + line[1:]
                         found_title = True
-                        title = last_line.rstrip('\n') + " | qutebrowser\n"
+                        title = last_line + " | qutebrowser\n"
                         title += "=" * (len(title) - 1)
 
                 if not hidden:
-                    outfp.write(line.replace(".asciidoc[", ".html["))
+                    outfp.write(line.replace(".asciidoc[", ".html[") + '\n')
                     last_line = line
 
         current_lines = outfp.getvalue()
@@ -180,7 +182,8 @@ class AsciiDoc:
         with open(modified_src, 'w+', encoding='utf-8') as final_version:
             final_version.write(title + "\n\n" + header + current_lines)
 
-        asciidoc_args = ['--theme=qute', '-a toc', '-a toc-placement=manual']
+        asciidoc_args = ['--theme=qute', '-a toc', '-a toc-placement=manual',
+                         '-a', 'source-highlighter=pygments']
         self.call(modified_src, dst, *asciidoc_args)
 
     def _build_website(self):
@@ -209,9 +212,8 @@ class AsciiDoc:
             shutil.copytree(src, full_dest)
 
         for dst, link_name in [
-            ('README.html', 'index.html'),
-            (os.path.join('doc', 'quickstart.html'), 'quickstart.html'),
-        ]:
+                ('README.html', 'index.html'),
+                (os.path.join('doc', 'quickstart.html'), 'quickstart.html')]:
             try:
                 os.symlink(dst, os.path.join(outdir, link_name))
             except FileExistsError:
@@ -223,16 +225,16 @@ class AsciiDoc:
             return self._args.asciidoc
 
         try:
-            subprocess.call(['asciidoc'], stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL)
+            subprocess.run(['asciidoc'], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
         except OSError:
             pass
         else:
             return ['asciidoc']
 
         try:
-            subprocess.call(['asciidoc.py'], stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL)
+            subprocess.run(['asciidoc.py'], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
         except OSError:
             pass
         else:
@@ -257,7 +259,7 @@ class AsciiDoc:
         try:
             env = os.environ.copy()
             env['HOME'] = self._homedir
-            subprocess.check_call(cmdline, env=env)
+            subprocess.run(cmdline, check=True, env=env)
         except (subprocess.CalledProcessError, OSError) as e:
             self._failed = True
             utils.print_col(str(e), 'red')

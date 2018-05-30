@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -23,6 +23,7 @@ import pytest_bdd as bdd
 
 # pylint: disable=unused-import
 from end2end.features.test_yankpaste_bdd import init_fake_clipboard
+# pylint: enable=unused-import
 
 
 @bdd.then(bdd.parsers.parse('"{text}" should be found'))

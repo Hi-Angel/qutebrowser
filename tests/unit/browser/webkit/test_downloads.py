@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -22,9 +22,10 @@ import pytest
 from qutebrowser.browser import downloads, qtnetworkdownloads
 
 
-def test_download_model(qapp, qtmodeltester, config_stub, cookiejar_and_cache):
+def test_download_model(qapp, qtmodeltester, config_stub, cookiejar_and_cache,
+                        fake_args):
     """Simple check for download model internals."""
-    manager = qtnetworkdownloads.DownloadManager(win_id=0)
+    manager = qtnetworkdownloads.DownloadManager()
     model = downloads.DownloadModel(manager)
     qtmodeltester.check(model)
 

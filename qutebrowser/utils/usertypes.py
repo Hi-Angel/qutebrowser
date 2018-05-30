@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -25,30 +25,15 @@ Module attributes:
 
 import operator
 import collections.abc
-import enum as pyenum
+import enum
 
+import attr
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject, QTimer
 
 from qutebrowser.utils import log, qtutils, utils
 
 
 _UNSET = object()
-
-
-def enum(name, items, start=1, is_int=False):
-    """Factory for simple enumerations.
-
-    Args:
-        name: Name of the enum
-        items: Iterable of items to be sequentially enumerated.
-        start: The number to use for the first value.
-               We use 1 as default so enum members are always True.
-        is_init: True if the enum should be a Python IntEnum
-    """
-    enums = [(v, i) for (i, v) in enumerate(items, start)]
-    base = pyenum.IntEnum if is_int else pyenum.Enum
-    base = pyenum.unique(base)
-    return base(name, enums)
 
 
 class NeighborList(collections.abc.Sequence):
@@ -65,7 +50,7 @@ class NeighborList(collections.abc.Sequence):
         _mode: The current mode.
     """
 
-    Modes = enum('Modes', ['edge', 'exception'])
+    Modes = enum.Enum('Modes', ['edge', 'exception'])
 
     def __init__(self, items=None, default=_UNSET, mode=Modes.exception):
         """Constructor.
@@ -118,8 +103,8 @@ class NeighborList(collections.abc.Sequence):
         if items:
             item = min(items, key=lambda tpl: abs(self.fuzzyval - tpl[1]))
         else:
-            sorted_items = sorted([(idx, e) for (idx, e) in
-                                   enumerate(self.items)], key=lambda e: e[1])
+            sorted_items = sorted(((idx, e) for (idx, e) in
+                                   enumerate(self.items)), key=lambda e: e[1])
             idx = 0 if offset < 0 else -1
             item = sorted_items[idx]
         self._idx = item[0]
@@ -221,45 +206,46 @@ class NeighborList(collections.abc.Sequence):
 
 
 # The mode of a Question.
-PromptMode = enum('PromptMode', ['yesno', 'text', 'user_pwd', 'alert',
-                                 'download'])
+PromptMode = enum.Enum('PromptMode', ['yesno', 'text', 'user_pwd', 'alert',
+                                      'download'])
 
 
 # Where to open a clicked link.
-ClickTarget = enum('ClickTarget', ['normal', 'tab', 'tab_bg', 'window',
-                                   'hover'])
+ClickTarget = enum.Enum('ClickTarget', ['normal', 'tab', 'tab_bg', 'window',
+                                        'hover'])
 
 
 # Key input modes
-KeyMode = enum('KeyMode', ['normal', 'hint', 'command', 'yesno', 'prompt',
-                           'insert', 'passthrough', 'caret', 'set_mark',
-                           'jump_mark', 'record_macro', 'run_macro'])
+KeyMode = enum.Enum('KeyMode', ['normal', 'hint', 'command', 'yesno', 'prompt',
+                                'insert', 'passthrough', 'caret', 'set_mark',
+                                'jump_mark', 'record_macro', 'run_macro'])
 
 
 # Exit statuses for errors. Needs to be an int for sys.exit.
-Exit = enum('Exit', ['ok', 'reserved', 'exception', 'err_ipc', 'err_init',
-                     'err_config', 'err_key_config'], is_int=True, start=0)
+Exit = enum.IntEnum('Exit', ['ok', 'reserved', 'exception', 'err_ipc',
+                             'err_init', 'err_config', 'err_key_config'],
+                    start=0)
 
 
 # Load status of a tab
-LoadStatus = enum('LoadStatus', ['none', 'success', 'success_https', 'error',
-                                 'warn', 'loading'])
+LoadStatus = enum.Enum('LoadStatus', ['none', 'success', 'success_https',
+                                      'error', 'warn', 'loading'])
 
 
 # Backend of a tab
-Backend = enum('Backend', ['QtWebKit', 'QtWebEngine'])
+Backend = enum.Enum('Backend', ['QtWebKit', 'QtWebEngine'])
 
 
 # JS world for QtWebEngine
-JsWorld = enum('JsWorld', ['main', 'application', 'user', 'jseval'])
+JsWorld = enum.Enum('JsWorld', ['main', 'application', 'user', 'jseval'])
 
 
 # Log level of a JS message. This needs to match up with the keys allowed for
 # the content.javascript.log setting.
-JsLogLevel = enum('JsLogLevel', ['unknown', 'info', 'warning', 'error'])
+JsLogLevel = enum.Enum('JsLogLevel', ['unknown', 'info', 'warning', 'error'])
 
 
-MessageLevel = enum('MessageLevel', ['error', 'warning', 'info'])
+MessageLevel = enum.Enum('MessageLevel', ['error', 'warning', 'info'])
 
 
 class Question(QObject):
@@ -281,6 +267,7 @@ class Question(QObject):
                  For user_pwd, a default username as string.
         title: The question title to show.
         text: The prompt text to display to the user.
+        url: Any URL referenced in prompts.
         answer: The value the user entered (as password for user_pwd).
         is_aborted: Whether the question was aborted.
         interrupted: Whether the question was interrupted by another one.
@@ -311,6 +298,7 @@ class Question(QObject):
         self.default = None
         self.title = None
         self.text = None
+        self.url = None
         self.answer = None
         self.is_aborted = False
         self.interrupted = False
@@ -407,3 +395,24 @@ class AbstractCertificateErrorWrapper:
 
     def is_overridable(self):
         raise NotImplementedError
+
+
+@attr.s
+class NavigationRequest:
+
+    """A request to navigate to the given URL."""
+
+    Type = enum.Enum('Type', [
+        'link_clicked',
+        'typed',  # QtWebEngine only
+        'form_submitted',
+        'form_resubmitted',  # QtWebKit only
+        'back_forward',
+        'reloaded',
+        'other'
+    ])
+
+    url = attr.ib()
+    navigation_type = attr.ib()
+    is_main_frame = attr.ib()
+    accepted = attr.ib(default=True)

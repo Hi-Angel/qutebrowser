@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2015-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2015-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -25,6 +25,7 @@ import sys
 import logging
 import types
 import typing
+import enum
 
 import pytest
 
@@ -102,7 +103,7 @@ class TestRegister:
     def test_lowercasing(self):
         """Make sure the function name is normalized correctly (uppercase)."""
         @cmdutils.register()
-        def Test():  # pylint: disable=invalid-name
+        def Test():  # noqa: N801,N806 pylint: disable=invalid-name
             """Blah."""
             pass
 
@@ -140,14 +141,6 @@ class TestRegister:
             """Blah."""
             pass
         assert cmdutils.cmd_dict['fun']._instance == 'foobar'
-
-    def test_kwargs(self):
-        """Make sure the other keyword arguments get passed to Command."""
-        @cmdutils.register(hide=True)
-        def fun():
-            """Blah."""
-            pass
-        assert cmdutils.cmd_dict['fun'].hide
 
     def test_star_args(self):
         """Check handling of *args."""
@@ -243,7 +236,7 @@ class TestRegister:
         else:
             assert pos_args == [('arg', 'arg')]
 
-    Enum = usertypes.enum('Test', ['x', 'y'])
+    Enum = enum.Enum('Test', ['x', 'y'])
 
     @pytest.mark.parametrize('typ, inp, choices, expected', [
         (int, '42', None, 42),

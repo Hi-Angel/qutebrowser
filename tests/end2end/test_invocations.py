@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -27,7 +27,12 @@ import re
 
 import pytest
 
-from PyQt5.QtCore import QProcess
+from PyQt5.QtCore import QProcess, qVersion
+
+
+ascii_locale = pytest.mark.skipif(sys.hexversion >= 0x03070000,
+                                  reason="Python >= 3.7 doesn't force ASCII "
+                                  "locale with LC_ALL=C")
 
 
 def _base_args(config):
@@ -37,6 +42,9 @@ def _base_args(config):
         args += ['--backend', 'webengine']
     else:
         args += ['--backend', 'webkit']
+    if qVersion() == '5.7.1':
+        # https://github.com/qutebrowser/qutebrowser/issues/3163
+        args += ['--qt-flag', 'disable-seccomp-filter-sandbox']
     args.append('about:blank')
     return args
 
@@ -70,7 +78,8 @@ def temp_basedir_env(tmpdir, short_tmpdir):
 
 
 @pytest.mark.linux
-def test_ascii_locale(request, server, tmpdir, quteproc_new):
+@ascii_locale
+def test_downloads_with_ascii_locale(request, server, tmpdir, quteproc_new):
     """Test downloads with LC_ALL=C set.
 
     https://github.com/qutebrowser/qutebrowser/issues/908
@@ -100,6 +109,54 @@ def test_ascii_locale(request, server, tmpdir, quteproc_new):
 
     assert len(tmpdir.listdir()) == 1
     assert (tmpdir / '?-issue908.bin').exists()
+
+
+@pytest.mark.linux
+@pytest.mark.parametrize('url', ['/föö.html', 'file:///föö.html'])
+@ascii_locale
+def test_open_with_ascii_locale(request, server, tmpdir, quteproc_new, url):
+    """Test opening non-ascii URL with LC_ALL=C set.
+
+    https://github.com/qutebrowser/qutebrowser/issues/1450
+    """
+    args = ['--temp-basedir'] + _base_args(request.config)
+    quteproc_new.start(args, env={'LC_ALL': 'C'})
+    quteproc_new.set_setting('url.auto_search', 'never')
+
+    # Test opening a file whose name contains non-ascii characters.
+    # No exception thrown means test success.
+    quteproc_new.send_cmd(':open {}'.format(url))
+
+    if not request.config.webengine:
+        line = quteproc_new.wait_for(message="Error while loading *: Error "
+                                     "opening /*: No such file or directory")
+        line.expected = True
+
+    quteproc_new.wait_for(message="load status for <* tab_id=* "
+                          "url='*/f%C3%B6%C3%B6.html'>: LoadStatus.error")
+
+
+@pytest.mark.linux
+@ascii_locale
+def test_open_command_line_with_ascii_locale(request, server, tmpdir,
+                                             quteproc_new):
+    """Test opening file via command line with a non-ascii name with LC_ALL=C.
+
+    https://github.com/qutebrowser/qutebrowser/issues/1450
+    """
+    # The file does not actually have to exist because the relevant checks will
+    # all be called. No exception thrown means test success.
+    args = (['--temp-basedir'] + _base_args(request.config) +
+            ['/home/user/föö.html'])
+    quteproc_new.start(args, env={'LC_ALL': 'C'}, wait_focus=False)
+
+    if not request.config.webengine:
+        line = quteproc_new.wait_for(message="Error while loading *: Error "
+                                     "opening /*: No such file or directory")
+        line.expected = True
+
+    quteproc_new.wait_for(message="load status for <* tab_id=* "
+                          "url='*/f*.html'>: LoadStatus.error")
 
 
 @pytest.mark.linux
@@ -259,14 +316,13 @@ def test_command_on_start(request, quteproc_new):
 
 def test_launching_with_python2():
     try:
-        proc = subprocess.Popen(['python2', '-m', 'qutebrowser',
-                                '--no-err-windows'], stderr=subprocess.PIPE)
+        proc = subprocess.run(['python2', '-m', 'qutebrowser',
+                               '--no-err-windows'], stderr=subprocess.PIPE)
     except FileNotFoundError:
         pytest.skip("python2 not found")
-    _stdout, stderr = proc.communicate()
     assert proc.returncode == 1
     error = "At least Python 3.5 is required to run qutebrowser"
-    assert stderr.decode('ascii').startswith(error)
+    assert proc.stderr.decode('ascii').startswith(error)
 
 
 def test_initial_private_browsing(request, quteproc_new):
@@ -311,18 +367,19 @@ def test_qute_settings_persistence(short_tmpdir, request, quteproc_new):
     args = _base_args(request.config) + ['--basedir', str(short_tmpdir)]
     quteproc_new.start(args)
     quteproc_new.open_path(
-        'qute://settings/set?option=ignore_case&value=always')
-    assert quteproc_new.get_setting('ignore_case') == 'always'
+        'qute://settings/set?option=search.ignore_case&value=always')
+    assert quteproc_new.get_setting('search.ignore_case') == 'always'
 
     quteproc_new.send_cmd(':quit')
     quteproc_new.wait_for_quit()
 
     quteproc_new.start(args)
-    assert quteproc_new.get_setting('ignore_case') == 'always'
+    assert quteproc_new.get_setting('search.ignore_case') == 'always'
 
 
 @pytest.mark.no_xvfb
 @pytest.mark.no_ci
+@pytest.mark.not_mac
 def test_force_software_rendering(request, quteproc_new):
     """Make sure we can force software rendering with -s."""
     if not request.config.webengine:

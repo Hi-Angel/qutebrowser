@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2014-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2014-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -22,6 +22,7 @@
 import html
 import functools
 
+import sip
 from PyQt5.QtCore import pyqtSlot, pyqtSignal, Qt, QUrl, QPoint
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtNetwork import QNetworkReply, QNetworkRequest
@@ -33,8 +34,7 @@ from qutebrowser.config import config
 from qutebrowser.browser import pdfjs, shared
 from qutebrowser.browser.webkit import http
 from qutebrowser.browser.webkit.network import networkmanager
-from qutebrowser.utils import (message, usertypes, log, jinja, objreg, debug,
-                               urlutils)
+from qutebrowser.utils import message, usertypes, log, jinja, objreg
 
 
 class BrowserPage(QWebPage):
@@ -54,10 +54,12 @@ class BrowserPage(QWebPage):
         shutting_down: Emitted when the page is currently shutting down.
         reloading: Emitted before a web page reloads.
                    arg: The URL which gets reloaded.
+        navigation_request: Emitted on acceptNavigationRequest.
     """
 
     shutting_down = pyqtSignal()
     reloading = pyqtSignal(QUrl)
+    navigation_request = pyqtSignal(usertypes.NavigationRequest)
 
     def __init__(self, win_id, tab_id, tabdata, private, parent=None):
         super().__init__(parent)
@@ -70,7 +72,6 @@ class BrowserPage(QWebPage):
         }
         self._ignore_load_started = False
         self.error_occurred = False
-        self.open_target = usertypes.ClickTarget.normal
         self._networkmanager = networkmanager.NetworkManager(
             win_id=win_id, tab_id=tab_id, private=private, parent=self)
         self.setNetworkAccessManager(self._networkmanager)
@@ -86,6 +87,21 @@ class BrowserPage(QWebPage):
             self.on_save_frame_state_requested)
         self.restoreFrameStateRequested.connect(
             self.on_restore_frame_state_requested)
+        self.loadFinished.connect(
+            functools.partial(self._inject_userjs, self.mainFrame()))
+        self.frameCreated.connect(self._connect_userjs_signals)
+
+    @pyqtSlot('QWebFrame*')
+    def _connect_userjs_signals(self, frame):
+        """Connect userjs related signals to `frame`.
+
+        Connect the signals used as triggers for injecting user
+        JavaScripts into the passed QWebFrame.
+        """
+        log.greasemonkey.debug("Connecting to frame {} ({})"
+                               .format(frame, frame.url().toDisplayString()))
+        frame.loadFinished.connect(
+            functools.partial(self._inject_userjs, frame))
 
     def javaScriptPrompt(self, frame, js_msg, default):
         """Override javaScriptPrompt to use qutebrowser prompts."""
@@ -132,7 +148,8 @@ class BrowserPage(QWebPage):
                 title="Open external application for {}-link?".format(scheme),
                 text="URL: <b>{}</b>".format(
                     html.escape(url.toDisplayString())),
-                yes_action=functools.partial(QDesktopServices.openUrl, url))
+                yes_action=functools.partial(QDesktopServices.openUrl, url),
+                url=info.url.toString(QUrl.RemovePassword | QUrl.FullyEncoded))
             return True
         elif (info.domain, info.error) in ignored_errors:
             log.webview.debug("Ignored error on {}: {} (error domain: {}, "
@@ -204,8 +221,7 @@ class BrowserPage(QWebPage):
         """Prepare the web page for being deleted."""
         self._is_shutting_down = True
         self.shutting_down.emit()
-        download_manager = objreg.get('qtnetwork-download-manager',
-                                      scope='window', window=self._win_id)
+        download_manager = objreg.get('qtnetwork-download-manager')
         nam = self.networkAccessManager()
         if download_manager.has_downloads_with_nam(nam):
             nam.setParent(download_manager)
@@ -223,7 +239,6 @@ class BrowserPage(QWebPage):
         printdiag.setAttribute(Qt.WA_DeleteOnClose)
         printdiag.open(lambda: frame.print(printdiag.printer()))
 
-    @pyqtSlot('QNetworkRequest')
     def on_download_requested(self, request):
         """Called when the user wants to download a link.
 
@@ -233,8 +248,7 @@ class BrowserPage(QWebPage):
         after this slot returns.
         """
         req = QNetworkRequest(request)
-        download_manager = objreg.get('qtnetwork-download-manager',
-                                      scope='window', window=self._win_id)
+        download_manager = objreg.get('qtnetwork-download-manager')
         download_manager.get_request(req, qnam=self.networkAccessManager())
 
     @pyqtSlot('QNetworkReply*')
@@ -248,8 +262,7 @@ class BrowserPage(QWebPage):
         here: http://mimesniff.spec.whatwg.org/
         """
         inline, suggested_filename = http.parse_content_disposition(reply)
-        download_manager = objreg.get('qtnetwork-download-manager',
-                                      scope='window', window=self._win_id)
+        download_manager = objreg.get('qtnetwork-download-manager')
         if not inline:
             # Content-Disposition: attachment -> force download
             download_manager.fetch(reply,
@@ -282,6 +295,42 @@ class BrowserPage(QWebPage):
             self._ignore_load_started = False
         else:
             self.error_occurred = False
+
+    def _inject_userjs(self, frame):
+        """Inject user JavaScripts into the page.
+
+        Args:
+            frame: The QWebFrame to inject the user scripts into.
+        """
+        if sip.isdeleted(frame):
+            log.greasemonkey.debug("_inject_userjs called for deleted frame!")
+            return
+
+        url = frame.url()
+        if url.isEmpty():
+            url = frame.requestedUrl()
+
+        log.greasemonkey.debug("_inject_userjs called for {} ({})"
+                               .format(frame, url.toDisplayString()))
+
+        greasemonkey = objreg.get('greasemonkey')
+        scripts = greasemonkey.scripts_for(url)
+        # QtWebKit has trouble providing us with signals representing
+        # page load progress at reasonable times, so we just load all
+        # scripts on the same event.
+        toload = scripts.start + scripts.end + scripts.idle
+
+        if url.isEmpty():
+            # This happens during normal usage like with view source but may
+            # also indicate a bug.
+            log.greasemonkey.debug("Not running scripts for frame with no "
+                                   "url: {}".format(frame))
+            assert not toload, toload
+
+        for script in toload:
+            if frame is self.mainFrame() or script.runs_on_sub_frames:
+                log.webview.debug('Running GM script: {}'.format(script.name))
+                frame.evaluateJavaScript(script.code())
 
     @pyqtSlot('QWebFrame*', 'QWebPage::Feature')
     def _on_feature_permission_requested(self, frame, feature):
@@ -429,7 +478,7 @@ class BrowserPage(QWebPage):
                                       source, line, msg)
 
     def acceptNavigationRequest(self,
-                                _frame: QWebFrame,
+                                frame: QWebFrame,
                                 request: QNetworkRequest,
                                 typ: QWebPage.NavigationType):
         """Override acceptNavigationRequest to handle clicked links.
@@ -441,36 +490,27 @@ class BrowserPage(QWebPage):
         Checks if it should open it in a tab (middle-click or control) or not,
         and then conditionally opens the URL here or in another tab/window.
         """
-        url = request.url()
-        log.webview.debug("navigation request: url {}, type {}, "
-                          "target {} override {}".format(
-                              url.toDisplayString(),
-                              debug.qenum_key(QWebPage, typ),
-                              self.open_target,
-                              self._tabdata.override_target))
+        type_map = {
+            QWebPage.NavigationTypeLinkClicked:
+                usertypes.NavigationRequest.Type.link_clicked,
+            QWebPage.NavigationTypeFormSubmitted:
+                usertypes.NavigationRequest.Type.form_submitted,
+            QWebPage.NavigationTypeFormResubmitted:
+                usertypes.NavigationRequest.Type.form_resubmitted,
+            QWebPage.NavigationTypeBackOrForward:
+                usertypes.NavigationRequest.Type.back_forward,
+            QWebPage.NavigationTypeReload:
+                usertypes.NavigationRequest.Type.reloaded,
+            QWebPage.NavigationTypeOther:
+                usertypes.NavigationRequest.Type.other,
+        }
+        is_main_frame = frame is self.mainFrame()
+        navigation = usertypes.NavigationRequest(url=request.url(),
+                                                 navigation_type=type_map[typ],
+                                                 is_main_frame=is_main_frame)
 
-        if self._tabdata.override_target is not None:
-            target = self._tabdata.override_target
-            self._tabdata.override_target = None
-        else:
-            target = self.open_target
+        if navigation.navigation_type == navigation.Type.reloaded:
+            self.reloading.emit(navigation.url)
 
-        if typ == QWebPage.NavigationTypeReload:
-            self.reloading.emit(url)
-            return True
-        elif typ != QWebPage.NavigationTypeLinkClicked:
-            return True
-
-        if not url.isValid():
-            msg = urlutils.get_errstring(url, "Invalid link clicked")
-            message.error(msg)
-            self.open_target = usertypes.ClickTarget.normal
-            return False
-
-        if target == usertypes.ClickTarget.normal:
-            return True
-
-        tab = shared.get_tab(self._win_id, target)
-        tab.openurl(url)
-        self.open_target = usertypes.ClickTarget.normal
-        return False
+        self.navigation_request.emit(navigation)
+        return navigation.accepted

@@ -22,7 +22,7 @@ Feature: Searching on a page
         Then "Bar" should be found
 
     Scenario: Searching with --reverse
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search -r foo
         And I wait for "search found foo with flags FindBackward" in the log
         Then "Foo" should be found
@@ -40,10 +40,25 @@ Feature: Searching on a page
         Then "space " should be found
 
     Scenario: Searching with / and slash in search term (issue 507)
-        When I run :set-cmd-text -s //slash
+        When I run :set-cmd-text //slash
         And I run :command-accept
         And I wait for "search found /slash" in the log
         Then "/slash" should be found
+
+    Scenario: Searching with arguments at start of search term
+        When I run :set-cmd-text /-r reversed
+        And I run :command-accept
+        And I wait for "search found -r reversed" in the log
+        Then "-r reversed" should be found
+
+    Scenario: Searching with semicolons in search term
+        When I run :set-cmd-text /;
+        And I run :fake-key -g ;
+        And I run :fake-key -g <space>
+        And I run :fake-key -g semi
+        And I run :command-accept
+        And I wait for "search found ;; semi" in the log
+        Then ";; semi" should be found
 
     # This doesn't work because this is QtWebKit behavior.
     @xfail_norun
@@ -52,28 +67,34 @@ Feature: Searching on a page
         And I wait for "search didn't find blub" in the log
         Then the warning "Text 'blub' not found on page!" should be shown
 
-    ## ignore_case
+    Scenario: Searching text duplicates
+        When I run :search foo
+        And I wait for "search found foo" in the log
+        And I run :search foo
+        Then "Ignoring duplicate search request for foo" should be logged
 
-    Scenario: Searching text with ignore_case = always
-        When I set ignore_case to always
+    ## search.ignore_case
+
+    Scenario: Searching text with search.ignore_case = always
+        When I set search.ignore_case to always
         And I run :search bar
         And I wait for "search found bar" in the log
         Then "Bar" should be found
 
-    Scenario: Searching text with ignore_case = never
-        When I set ignore_case to never
+    Scenario: Searching text with search.ignore_case = never
+        When I set search.ignore_case to never
         And I run :search bar
         And I wait for "search found bar with flags FindCaseSensitively" in the log
         Then "bar" should be found
 
-    Scenario: Searching text with ignore_case = smart (lower-case)
-        When I set ignore_case to smart
+    Scenario: Searching text with search.ignore_case = smart (lower-case)
+        When I set search.ignore_case to smart
         And I run :search bar
         And I wait for "search found bar" in the log
         Then "Bar" should be found
 
-    Scenario: Searching text with ignore_case = smart (upper-case)
-        When I set ignore_case to smart
+    Scenario: Searching text with search.ignore_case = smart (upper-case)
+        When I set search.ignore_case to smart
         And I run :search Foo
         And I wait for "search found Foo with flags FindCaseSensitively" in the log
         Then "Foo" should be found  # even though foo was first
@@ -81,7 +102,7 @@ Feature: Searching on a page
     ## :search-next
 
     Scenario: Jumping to next match
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search foo
         And I wait for "search found foo" in the log
         And I run :search-next
@@ -89,7 +110,7 @@ Feature: Searching on a page
         Then "Foo" should be found
 
     Scenario: Jumping to next match with count
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search baz
         And I wait for "search found baz" in the log
         And I run :search-next with count 2
@@ -97,7 +118,7 @@ Feature: Searching on a page
         Then "BAZ" should be found
 
     Scenario: Jumping to next match with --reverse
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search --reverse foo
         And I wait for "search found foo with flags FindBackward" in the log
         And I run :search-next
@@ -121,7 +142,7 @@ Feature: Searching on a page
 
     # https://github.com/qutebrowser/qutebrowser/issues/2438
     Scenario: Jumping to next match after clearing
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search foo
         And I wait for "search found foo" in the log
         And I run :search
@@ -132,7 +153,7 @@ Feature: Searching on a page
     ## :search-prev
 
     Scenario: Jumping to previous match
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search foo
         And I wait for "search found foo" in the log
         And I run :search-next
@@ -142,7 +163,7 @@ Feature: Searching on a page
         Then "foo" should be found
 
     Scenario: Jumping to previous match with count
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search baz
         And I wait for "search found baz" in the log
         And I run :search-next
@@ -154,7 +175,7 @@ Feature: Searching on a page
         Then "baz" should be found
 
     Scenario: Jumping to previous match with --reverse
-        When I set ignore_case to always
+        When I set search.ignore_case to always
         And I run :search --reverse foo
         And I wait for "search found foo with flags FindBackward" in the log
         And I run :search-next
@@ -237,4 +258,25 @@ Feature: Searching on a page
         And I wait until data/hello.txt is loaded
         Then the following tabs should be open:
             - data/search.html
+            - data/hello.txt (active)
+
+    @qtwebkit_skip: Not supported in qtwebkit
+    Scenario: Follow a searched link in an iframe
+        When I open data/iframe_search.html
+        And I run :tab-only
+        And I run :search follow
+        And I wait for "search found follow" in the log
+        And I run :follow-selected
+        Then "navigation request: url http://localhost:*/data/hello.txt, type Type.link_clicked, is_main_frame False" should be logged
+
+    @qtwebkit_skip: Not supported in qtwebkit
+    Scenario: Follow a tabbed searched link in an iframe
+        When I open data/iframe_search.html
+        And I run :tab-only
+        And I run :search follow
+        And I wait for "search found follow" in the log
+        And I run :follow-selected -t
+        And I wait until data/hello.txt is loaded
+        Then the following tabs should be open:
+            - data/iframe_search.html
             - data/hello.txt (active)

@@ -1,6 +1,6 @@
 # vim: ft=python fileencoding=utf-8 sts=4 sw=4 et:
 
-# Copyright 2016-2017 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
+# Copyright 2016-2018 Florian Bruhin (The Compiler) <mail@qutebrowser.org>
 #
 # This file is part of qutebrowser.
 #
@@ -59,6 +59,7 @@ def _js_slot(*args):
     def _decorator(method):
         @functools.wraps(method)
         def new_method(self, *args, **kwargs):
+            """Call the underlying function."""
             try:
                 return method(self, *args, **kwargs)
             except:

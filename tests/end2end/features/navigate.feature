@@ -18,10 +18,15 @@ Feature: Using :navigate
         And I run :navigate up with count 2
         Then data/navigate should be loaded
 
+    Scenario: Navigating up in qute://help/
+        When I open qute://help/commands.html
+        And I run :navigate up
+        Then qute://help/ should be loaded
+
     # prev/next
 
     Scenario: Navigating to previous page
-        When I open data/navigate
+        When I open data/navigate in a new tab
         And I run :navigate prev
         Then data/navigate/prev.html should be loaded
 
